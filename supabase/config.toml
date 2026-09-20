@@ -1,0 +1,5 @@
+project_id = "floodnav"
+[functions.ingest-reading]
+# ESP devices authenticate with their own high-entropy x-device-token.
+# The handler verifies this token before inserting any reading.
+verify_jwt = false

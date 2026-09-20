@@ -4,15 +4,20 @@ import {
   SensorReading,
   sensorIsFresh,
 } from "../services/sensorService";
-const url = import.meta.env.VITE_SUPABASE_URL || "";
-const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
-export const sensorsConfigured = !!url && !!key;
-export function useSensorReadings(enabled: boolean) {
+import { SupabaseConfig } from "../services/supabaseConfig";
+export function useSensorReadings(
+  enabled: boolean,
+  { url, key }: SupabaseConfig,
+) {
   const [rows, setRows] = useState<SensorReading[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    setRows([]);
+    setError("");
+  }, [url, key]);
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
@@ -48,7 +53,7 @@ export function useSensorReadings(enabled: boolean) {
       clearInterval(tick);
       controller?.abort();
     };
-  }, [enabled, refresh]);
+  }, [enabled, refresh, url, key]);
   const freshCount = rows.filter((r) =>
     sensorIsFresh(r, Math.max(now, Date.now())),
   ).length;

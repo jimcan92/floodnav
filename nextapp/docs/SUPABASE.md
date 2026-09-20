@@ -119,6 +119,6 @@ Cloud deployment and on-device validation require your Supabase project and actu
 
 The app now defaults to the Supabase sensor source. In **Online routes → Supabase ESP sensors → Supabase connection**, enter your project URL and publishable key and choose **Test and save connection**. The app tests the `latest_flood_readings` view before activating the connection. An empty table is a valid connection, but does not enable simulation until fresh readings arrive.
 
-Only public connection values are saved in this browser's local storage. A different browser/device must be configured separately. **Use environment defaults** clears that saved override and restores the SvelteKit public environment configuration; `.env` remains supported for deployment. Secret/service-role keys are rejected before any request or persistence.
+Only public connection values are saved in this browser's local storage. A different browser/device must be configured separately. **Use environment defaults** clears that saved override and restores the Vite environment configuration; `.env` remains supported for deployment. Secret/service-role keys are rejected before any request or persistence.
 
 The sensor panel lists the reported depth, road and observation timestamp. Readings refresh every 15 seconds. The PlatformIO source is in [firmware/esp32](../firmware/esp32/README.md). Physical sensor wiring/driver selection still requires the exact sensor model.

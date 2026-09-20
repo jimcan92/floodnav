@@ -6,3 +6,16 @@ playwright-report/
 .env.*
 !.env.example
 *.log
+firmware/esp32/.pio/
+firmware/esp32/.venv/
+firmware/esp32/include/secrets.h
+firmware/esp32/include/root_ca.h
+firmware/esp32/.vscode/
+
+# Local client output and archived dependencies
+client/.svelte-kit/
+client/build/
+client/.vercel/
+client/node_modules/
+nextapp/node_modules/
+nextapp/dist/

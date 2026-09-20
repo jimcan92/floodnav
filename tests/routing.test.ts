@@ -6,15 +6,15 @@ import {
   intersectsFlood,
   parseRoadRoutes,
   positionAt,
-} from "../src/services/routingService";
-import { DEMO_ROADS, scenarioFloods } from "../src/data/demoScenarios";
-import { VEHICLE_CATEGORIES } from "../src/data/vehicleCategories";
-import { Coordinate, FloodHazardZone } from "../src/types/navigation";
+} from "../client/src/lib/services/routingService";
+import { DEMO_ROADS, scenarioFloods } from "../client/src/lib/data/demoScenarios";
+import { VEHICLE_CATEGORIES } from "../client/src/lib/data/vehicleCategories";
+import { Coordinate, FloodHazardZone } from "../client/src/lib/types/navigation";
 import {
   advanceProgress,
   RequestGate,
   WarningGate,
-} from "../src/services/navigationState";
+} from "../client/src/lib/services/navigationState";
 const vehicle = VEHICLE_CATEGORIES[0];
 const zone: FloodHazardZone = {
   id: "z",

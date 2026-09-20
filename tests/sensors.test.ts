@@ -9,7 +9,7 @@ import {
   sensorIsFresh,
   sensorZones,
   SensorReading,
-} from "../src/services/sensorService";
+} from "../client/src/lib/services/sensorService";
 const now = Date.now();
 const reading = {
   sensor_id: "cebu-001",

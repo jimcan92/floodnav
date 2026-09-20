@@ -30,10 +30,9 @@ import {
   RequestGate,
   WarningGate,
 } from "./services/navigationState";
-import {
-  sensorsConfigured,
-  useSensorReadings,
-} from "./hooks/useSensorReadings";
+import { useSensorReadings } from "./hooks/useSensorReadings";
+import { loadSupabaseConfig } from "./services/supabaseConfig";
+import { SupabaseConnection } from "./components/Settings/SupabaseConnection";
 import { sensorZones } from "./services/sensorService";
 import { speechService } from "./services/speechService";
 import { NavigationMap } from "./components/Map/NavigationMap";
@@ -41,11 +40,12 @@ import { VehicleModal } from "./components/VehicleSelector/VehicleModal";
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>("online");
+  const [supabaseConfig, setSupabaseConfig] = useState(loadSupabaseConfig);
   const [floodSource, setFloodSource] = useState<"mock" | "supabase">(
-    sensorsConfigured ? "supabase" : "mock",
+    "supabase",
   );
   const live = mode === "online" && floodSource === "supabase";
-  const sensors = useSensorReadings(live);
+  const sensors = useSensorReadings(live, supabaseConfig);
   const [scenario, setScenario] = useState<DemoScenario>("dry");
   const [origin, setOrigin] = useState<Coordinate>(DEMO_ORIGIN);
   const [destination, setDestination] = useState<Coordinate>(DEMO_DESTINATION);
@@ -331,6 +331,13 @@ export default function App() {
             </label>
             {live && (
               <section className="notice" aria-label="Sensor feed status">
+                <SupabaseConnection
+                  config={supabaseConfig}
+                  onConnect={(config) => {
+                    resetInput();
+                    setSupabaseConfig(config);
+                  }}
+                />
                 <strong>ESP sensor feed</strong>
                 <p>
                   {sensors.freshCount}/{sensors.rows.length} sensors have fresh
@@ -346,6 +353,22 @@ export default function App() {
                   </p>
                 )}
                 <button onClick={sensors.retry}>Refresh sensors</button>
+                <ul className="space-y-2 mt-3" aria-label="Sensor readings">
+                  {sensors.rows.map((sensor) => (
+                    <li key={sensor.sensor_id}>
+                      <strong>{sensor.name}</strong>:{" "}
+                      {sensor.water_depth_cm === null
+                        ? "No reading"
+                        : `${sensor.water_depth_cm} cm`}
+                      <div>
+                        {sensor.affected_road} ·{" "}
+                        {sensor.observed_at
+                          ? new Date(sensor.observed_at).toLocaleString()
+                          : "Awaiting first reading"}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </section>
             )}
             <label>

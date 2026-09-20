@@ -185,3 +185,16 @@ select:focus-visible {
     overflow: auto !important;
   }
 }
+.control-panel input {
+  width: 100%;
+  min-width: 0;
+  background: #1e293b;
+  color: #f1f5f9;
+  border: 1px solid #475569;
+  padding: 9px 12px;
+  border-radius: 8px;
+}
+input:focus-visible {
+  outline: 3px solid #38bdf8;
+  outline-offset: 2px;
+}

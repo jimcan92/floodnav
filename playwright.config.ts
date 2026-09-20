@@ -8,12 +8,12 @@ export default defineConfig({
     channel: process.env.PLAYWRIGHT_CHANNEL || "msedge",
   },
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1",
+    command: "npm --prefix client run dev -- --host 127.0.0.1",
     url: "http://127.0.0.1:3000",
     reuseExistingServer: false,
     env: {
-      VITE_SUPABASE_URL: "https://floodnav-test.supabase.co",
-      VITE_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_browser_test",
+      PUBLIC_SUPABASE_URL: "https://floodnav-test.supabase.co",
+      PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_browser_test",
     },
   },
   reporter: "list",

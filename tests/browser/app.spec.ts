@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 const direct = JSON.parse(
   readFileSync(
-    new URL("../../src/data/demoRoutes.json", import.meta.url),
+    new URL("../../client/src/lib/data/demoRoutes.json", import.meta.url),
     "utf8",
   ).replace(/^\uFEFF/, ""),
 );
@@ -35,7 +35,7 @@ test.beforeEach(async ({ page }) => {
     route.fulfill({ contentType: "image/png", body: tile }),
   );
 });
-test("layers preserve demo state; scenarios block and reroute; StrictMode map survives", async ({
+test("layers preserve demo state; scenarios block and reroute; map survives mode changes", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -194,6 +194,7 @@ test("routing timeout offers retry and a new trip resets simulation", async ({
   await page.clock.install();
   await page.route("**/router.project-osrm.org/**", () => {});
   await page.goto("/");
+  await expect(page.getByLabel("Routing mode")).toBeEnabled();
   await page.clock.runFor(10001);
   await expect(
     page.getByText("Routing timed out. Retry or use Demo scenarios."),
@@ -263,4 +264,51 @@ test("Supabase readings refresh, block positive water and pause stale feeds", as
   await expect(
     page.getByRole("button", { name: "Start / resume simulation" }),
   ).toBeEnabled();
+});
+
+test("connection form persists public settings and rejects secret keys without a request", async ({
+  page,
+}) => {
+  let requests = 0;
+  await page.route("**/new-project.supabase.co/rest/v1/**", (route) => {
+    requests++;
+    return route.fulfill({ json: [] });
+  });
+  await page.goto("/");
+  await expect(page.getByLabel("Routing mode")).toBeEnabled();
+  await page.getByText("Supabase connection", { exact: true }).click();
+  await page
+    .getByLabel("Supabase project URL")
+    .fill("https://new-project.supabase.co");
+  await page
+    .getByLabel("Supabase publishable key")
+    .fill("sb_secret_do_not_send");
+  await page.getByRole("button", { name: "Test and save connection" }).click();
+  await expect(
+    page.getByText(
+      "Use a publishable key, never a secret key in the frontend.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(requests).toBe(0);
+  await page
+    .getByLabel("Supabase publishable key")
+    .fill("sb_publishable_new_project");
+  await page.getByRole("button", { name: "Test and save connection" }).click();
+  await expect(
+    page.getByText("Connected: 0 sensors found.", { exact: false }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start / resume simulation" }),
+  ).toBeDisabled();
+  await page.reload();
+  await expect(page.getByLabel("Routing mode")).toBeEnabled();
+  await page.getByText("Supabase connection", { exact: true }).click();
+  await expect(page.getByLabel("Supabase project URL")).toHaveValue(
+    "https://new-project.supabase.co",
+  );
+  await page.getByRole("button", { name: "Use environment defaults" }).click();
+  await expect(page.getByLabel("Supabase project URL")).toHaveValue(
+    "https://floodnav-test.supabase.co",
+  );
 });

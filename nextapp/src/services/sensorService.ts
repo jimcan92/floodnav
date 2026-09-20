@@ -1,3 +1,4 @@
+import { validateSupabaseConfig } from "./supabaseConfig";
 import { Coordinate, FloodHazardZone } from "../types/navigation";
 export interface SensorReading {
   sensor_id: string;
@@ -72,29 +73,9 @@ export async function fetchSensorReadings(
 ): Promise<SensorReading[]> {
   if (!url || !key)
     throw new Error(
-      "Supabase is not configured. Follow docs/SUPABASE.md and set the two VITE_SUPABASE variables.",
+      "Supabase is not configured. Open Supabase connection below, or set the VITE_SUPABASE variables.",
     );
-  if (
-    !url.startsWith("https://") &&
-    !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(url)
-  )
-    throw new Error("Use an HTTPS Supabase project URL.");
-  if (key.startsWith("sb_secret_"))
-    throw new Error(
-      "Use a publishable key, never a secret key in the frontend.",
-    );
-  if (key.startsWith("eyJ")) {
-    try {
-      const payload = JSON.parse(
-        atob(key.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
-      );
-      if (payload.role !== "anon") throw new Error();
-    } catch {
-      throw new Error(
-        "Only a publishable or legacy anon key belongs in the frontend.",
-      );
-    }
-  }
+  ({ url, key } = validateSupabaseConfig({ url, key }));
   const response = await fetch(
     `${url.replace(/\/$/, "")}/rest/v1/latest_flood_readings?select=*&order=sensor_id.asc&limit=1000`,
     {

@@ -5,6 +5,8 @@ export interface LocationPreset {
 	name: string;
 	shortDescription: string;
 	coordinate: Coordinate;
+	category?: 'popular' | 'commercial' | 'transit' | 'health' | 'flood_prone';
+	icon?: string;
 }
 
 export const PRESET_ORIGINS: LocationPreset[] = [
@@ -12,19 +14,57 @@ export const PRESET_ORIGINS: LocationPreset[] = [
 		id: 'cebu_fuente',
 		name: 'Fuente Osmeña Circle, Cebu City',
 		shortDescription: 'Uptown Commercial Center',
-		coordinate: [10.3117, 123.8938]
+		coordinate: [10.3117, 123.8938],
+		category: 'popular',
+		icon: '⭕'
 	},
 	{
 		id: 'cebu_it_park',
 		name: 'Cebu IT Park, Lahug',
-		shortDescription: 'Business Process District',
-		coordinate: [10.3297, 123.9062]
+		shortDescription: 'Salinas Drive · Business Process District',
+		coordinate: [10.3297, 123.9062],
+		category: 'commercial',
+		icon: '💼'
 	},
 	{
 		id: 'cebu_capitol',
 		name: 'Cebu Provincial Capitol',
-		shortDescription: 'Escario / Capitol Site',
-		coordinate: [10.3173, 123.8907]
+		shortDescription: 'Escario St / Capitol Site',
+		coordinate: [10.3173, 123.8907],
+		category: 'popular',
+		icon: '🏛️'
+	},
+	{
+		id: 'cebu_ayala_origin',
+		name: 'Ayala Center Cebu',
+		shortDescription: 'Cardinal Rosales Ave, Cebu Business Park',
+		coordinate: [10.3177, 123.9054],
+		category: 'commercial',
+		icon: '🛍️'
+	},
+	{
+		id: 'cebu_emall_origin',
+		name: 'E-Mall (Elizabeth Mall)',
+		shortDescription: 'Leon Kilat Street, Sambag I, Cebu City',
+		coordinate: [10.2995, 123.8967],
+		category: 'transit',
+		icon: '🕒'
+	},
+	{
+		id: 'mandaue_city_hall_origin',
+		name: 'Mandaue City Hall',
+		shortDescription: 'Centro, Mandaue City',
+		coordinate: [10.3341, 123.9431],
+		category: 'popular',
+		icon: '🏛️'
+	},
+	{
+		id: 'cebu_chong_hua_origin',
+		name: 'Chong Hua Hospital',
+		shortDescription: 'J. Llorente St, Fuente Area',
+		coordinate: [10.3135, 123.8924],
+		category: 'health',
+		icon: '🏥'
 	}
 ];
 
@@ -33,25 +73,89 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		id: 'cebu_colon',
 		name: 'Colon Street (Heritage Downtown)',
 		shortDescription: 'Historic downtown, prone to tidal / flash floods',
-		coordinate: [10.2974, 123.8996]
+		coordinate: [10.2974, 123.8996],
+		category: 'flood_prone',
+		icon: '🌊'
 	},
 	{
 		id: 'sm_city_cebu',
 		name: 'SM City Cebu, North Reclamation Area',
 		shortDescription: 'Reclamation corridor near sub-sea level outlets',
-		coordinate: [10.3121, 123.9184]
+		coordinate: [10.3121, 123.9184],
+		category: 'commercial',
+		icon: '🛍️'
 	},
 	{
 		id: 'mandaue_as_fortuna',
 		name: 'A.S. Fortuna St., Mandaue City',
 		shortDescription: 'Commercial arterial known for heavy rain flooding',
-		coordinate: [10.3392, 123.9275]
+		coordinate: [10.3392, 123.9275],
+		category: 'flood_prone',
+		icon: '🌊'
 	},
 	{
 		id: 'cebu_ayala',
 		name: 'Ayala Center Cebu, Cebu Business Park',
 		shortDescription: 'Central Business Park',
-		coordinate: [10.3177, 123.9054]
+		coordinate: [10.3177, 123.9054],
+		category: 'commercial',
+		icon: '🛍️'
+	},
+	{
+		id: 'sm_seaside_cebu',
+		name: 'SM Seaside City Cebu',
+		shortDescription: 'South Road Properties (SRP), Mambaling',
+		coordinate: [10.2818, 123.8812],
+		category: 'commercial',
+		icon: '🛍️'
+	},
+	{
+		id: 'cebu_robinsons_galleria',
+		name: 'Robinsons Galleria Cebu',
+		shortDescription: 'General Maxilom Ave Extension, Tejero',
+		coordinate: [10.3065, 123.9103],
+		category: 'commercial',
+		icon: '🛍️'
+	},
+	{
+		id: 'cebu_emall',
+		name: 'E-Mall (Elizabeth Mall)',
+		shortDescription: 'Leon Kilat Street, Sambag I, Cebu City',
+		coordinate: [10.2995, 123.8967],
+		category: 'transit',
+		icon: '🕒'
+	},
+	{
+		id: 'cebu_doc_hospital',
+		name: "Cebu Doctors' University Hospital",
+		shortDescription: 'Osmeña Blvd, Capitol Site',
+		coordinate: [10.3142, 123.8913],
+		category: 'health',
+		icon: '🏥'
+	},
+	{
+		id: 'usc_talamban',
+		name: 'USC - Talamban Campus',
+		shortDescription: 'Gov. M. Cuenco Ave, Nasipit, Talamban',
+		coordinate: [10.3541, 123.9135],
+		category: 'popular',
+		icon: '🎓'
+	},
+	{
+		id: 'carbon_market',
+		name: 'Carbon Market Complex',
+		shortDescription: 'M.C. Briones St, Downtown Waterfront',
+		coordinate: [10.2917, 123.8988],
+		category: 'popular',
+		icon: '🏪'
+	},
+	{
+		id: 'mctan_airport',
+		name: 'Mactan-Cebu International Airport (MCIA)',
+		shortDescription: 'Airport Road, Lapu-Lapu City',
+		coordinate: [10.3075, 123.9792],
+		category: 'transit',
+		icon: '✈️'
 	}
 ];
 

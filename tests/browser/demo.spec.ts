@@ -1,0 +1,144 @@
+import { test, expect, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+const direct = JSON.parse(readFileSync(new URL('../../client/src/lib/data/demoRoutes.json', import.meta.url), 'utf8').replace(/^\uFEFF/, ''));
+const tile = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+async function mock(page: Page) {
+ await page.route('**/router.project-osrm.org/**', route => route.fulfill({ json: direct }));
+ await page.route('**/mt1.google.com/**', route => route.fulfill({ contentType: 'image/png', body: tile }));
+}
+test('directions landing creates a room and controller edits synchronize without resetting travel', async ({ page, browser, request }) => {
+ const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+ await mock(page); await page.goto('/');
+ await expect(page.getByRole('heading', { name: 'Where to?' })).toBeVisible();
+ await expect(page.locator('[data-map-layer]')).toHaveAttribute('data-map-layer', 'Streets');
+ await page.getByRole('button', { name: 'Create demo', exact: true }).click();
+ await expect(page).toHaveURL(/\/demo\/[a-z0-9-]+$/);
+ await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
+ const roomUrl = page.url(), id = roomUrl.split('/').at(-1)!;
+ const controllerContext = await browser.newContext(); const controller = await controllerContext.newPage(); await mock(controller); controller.on('pageerror', e => errors.push(e.message));
+ await controller.goto(`${roomUrl}/controller`);
+ await expect(controller.getByRole('heading', { name: 'Change the journey.' })).toBeVisible();
+ await controller.getByRole('button', { name: 'Add traffic area' }).click();
+ await controller.locator('.demo-map').click({ position: { x: 580, y: 310 } });
+ await expect(controller.getByLabel('Area name')).toBeVisible();
+ await controller.getByLabel('Area name').fill('Cebu traffic test');
+ await controller.getByLabel('Traffic level').selectOption('heavy');
+ await controller.getByRole('button', { name: 'Apply changes' }).click();
+  await expect(controller.getByText('Published to traveler')).toBeVisible();
+ await controller.screenshot({ path: 'test-results/controller-desktop.png' });
+ let room = await (await request.get(`/api/demo/rooms/${id}`)).json();
+ expect(room.conditions.zones[0].name).toBe('Cebu traffic test');
+ await page.getByRole('button', { name: 'Start demo', exact: true }).click();
+ await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+ await expect.poll(async () => (await (await request.get(`/api/demo/rooms/${id}`)).json()).telemetry?.progress || 0).toBeGreaterThan(0);
+ room = await (await request.get(`/api/demo/rooms/${id}`)).json(); const previousProgress = room.telemetry.progress;
+ await request.patch(`/api/demo/rooms/${id}`, { data: { revision: room.revision, conditions: { ...room.conditions, zones: [] } } });
+ await expect.poll(async () => (await (await request.get(`/api/demo/rooms/${id}`)).json()).telemetry?.progress || 0).toBeGreaterThan(previousProgress);
+ room = await (await request.get(`/api/demo/rooms/${id}`)).json();
+ const end = room.telemetry.route.polyline.at(-1);
+ await request.patch(`/api/demo/rooms/${id}`, { data: { revision: room.revision, conditions: { ...room.conditions, zones: [{ id: 'flood-test', kind: 'flood', name: 'Flood ahead', center: end, radiusMeters: 500, depthCm: 100, rainMmH: 40, enabled: true, level: 'moderate' }] } } });
+ await expect(page.getByText('Flood ahead. Travel paused.', { exact: true })).toBeVisible();
+ await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
+ await expect(controller.locator('.monitor-status')).toHaveText('blocked');
+ expect(errors).toEqual([]); await controllerContext.close();
+});
+test('LAN-compatible IDs and mobile controller retain unpublished areas while picking', async ({ page, request }) => {
+ await page.addInitScript(() => { Object.defineProperty(crypto, 'randomUUID', { value: undefined }); });
+ await mock(page); await page.goto('/'); await page.getByRole('button', { name: 'Create demo', exact: true }).click();
+ await expect(page).toHaveURL(/\/demo\/[a-z0-9-]+$/); const roomUrl = page.url();
+ await page.setViewportSize({ width: 390, height: 844 }); await page.goto(`${roomUrl}/controller`);
+ await page.getByRole('button', { name: 'Add traffic area' }).click();
+ await page.locator('.demo-map').click({ position: { x: 190, y: 390 } });
+ await page.getByLabel('Area name').fill('First unpublished area');
+ await page.getByRole('button', { name: 'Add flood area' }).click();
+ await page.locator('.demo-map').click({ position: { x: 210, y: 440 } });
+ await expect(page.getByRole('button', { name: /First unpublished area/ })).toBeVisible();
+ await page.getByRole('button', { name: 'Apply changes' }).click();
+ await expect(page.getByText('Published to traveler')).toBeVisible();
+ const room = await (await request.get(`/api/demo/rooms/${roomUrl.split('/').at(-1)}`)).json();
+ expect(room.conditions.zones).toHaveLength(2);
+ await page.screenshot({ path: 'test-results/controller-mobile.png' });
+});
+test('all four source combinations keep simulation data out of rainfall logging', async ({ page, request }) => {
+ const room = await (await request.post('/api/demo/rooms')).json(); let assessmentCalls = 0;
+ await mock(page);
+ const mockedRoad = { key: 'tomtom_0', source: 'tomtom', polyline: direct.routes[0].geometry.coordinates.map((p: number[]) => [p[1], p[0]]), distanceMeters: direct.routes[0].distance, durationSeconds: direct.routes[0].duration, fetchedAt: new Date().toISOString(), steps: [] };
+ await page.route('**/api/demo/routes', route => route.fulfill({ json: [mockedRoad] }));
+ await page.route('**/api/demo/traffic/**', route => route.fulfill({ contentType: 'image/png', body: tile }));
+ await page.route('**/api/assessments', route => {
+  const data = route.request().postDataJSON(); expect(data.loggingEnabled).toBe(false); assessmentCalls++;
+  const stamp = new Date().toISOString();
+  return route.fulfill({ json: { assessedAt: stamp, assessmentId: data.assessmentId, modelVersion: 'test', loggingStatus: 'disabled', recommendedKey: null, routes: data.roads.map((r: any) => ({ key: r.key, score: 1 })), hazards: { features: [], verified: true }, weather: { errors: [], samples: [{ observedAt: stamp, fetchedAt: stamp, forecastFetchedAt: stamp, rainMmH: 0, forecast: [{ endsAt: new Date(Date.now() + 7200000).toISOString(), rainMm3h: 0, probability: 0 }] }] } } });
+ });
+ await page.goto(`/demo/${room.id}`); await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
+ let revision = 0;
+ for (const [trafficSimulation, floodSimulation] of [[true, false], [false, false], [false, true], [true, true]]) {
+  await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: revision++, conditions: { trafficSimulation, floodSimulation, zones: [] } } });
+  await expect(page.locator('.map-source-badges')).toContainText(trafficSimulation ? 'Simulated traffic' : 'Live traffic');
+  await expect(page.locator('.map-source-badges')).toContainText(floodSimulation ? 'Simulated flooding' : 'Live rainfall');
+  await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
+ }
+ expect(assessmentCalls).toBeGreaterThanOrEqual(2);
+});
+test('lost connection pauses traveler and reconnect restores the current environment', async ({ page, context, request }) => {
+ const room = await (await request.post('/api/demo/rooms')).json(); await mock(page); await page.goto(`/demo/${room.id}`);
+ await page.getByRole('button', { name: 'Start demo', exact: true }).click();
+ await expect.poll(async () => (await (await request.get(`/api/demo/rooms/${room.id}`)).json()).telemetry?.progress || 0).toBeGreaterThan(0);
+ await context.setOffline(true);
+ await expect(page.getByText('Reconnecting to controller updates. Travel paused.')).toBeVisible({ timeout: 30000 });
+ const latest = await (await request.get(`/api/demo/rooms/${room.id}`)).json();
+ await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: latest.revision, conditions: { ...latest.conditions, zones: [{ id: 'offline-flood', kind: 'flood', name: 'Offline flood', center: latest.telemetry.route.polyline.at(-1), radiusMeters: 300, depthCm: 100, rainMmH: 20, level: 'moderate', enabled: true }] } } });
+ await context.setOffline(false);
+ await expect(page.getByText('Flood ahead. Travel paused.', { exact: true })).toBeVisible({ timeout: 15000 });
+ await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
+});
+test('second traveler is read-only until takeover; preset reset and conflict protection', async ({ page, browser, request }) => {
+ const room = await (await request.post('/api/demo/rooms')).json();
+ await mock(page); await page.goto(`/demo/${room.id}`);
+ await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
+ const context = await browser.newContext(), second = await context.newPage(); await mock(second); await second.goto(`/demo/${room.id}`);
+ await expect(second.getByRole('button', { name: 'Take control', exact: true })).toBeVisible();
+ await expect(second.getByRole('button', { name: 'Start demo', exact: true })).toBeDisabled();
+ await second.getByRole('button', { name: 'Take control', exact: true }).click();
+ await expect(second.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
+ await expect(page.getByRole('button', { name: 'Take control', exact: true })).toBeVisible();
+ await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: 0, conditions: room.conditions, preset: 'blocked' } });
+ await expect(second.getByText('Flood ahead. Travel paused.', { exact: true })).toBeVisible();
+ const stale = await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: 0, conditions: room.conditions } }); expect(stale.status()).toBe(409);
+ await context.close();
+});
+test('location presets, online search, map picking, swapping, and mobile layout', async ({ page }) => {
+ await mock(page); await page.route('**/api/places?**', route => route.fulfill({ json: [{ id: 'test', name: 'Test Cebu address', coordinate: [10.31, 123.90] }] }));
+ await page.goto('/');
+ await page.getByRole('textbox', { name: 'Starting point', exact: true }).click();
+ await page.getByRole('button', { name: /Cebu IT Park/ }).click();
+ await expect(page.getByRole('textbox', { name: 'Starting point', exact: true })).toHaveValue('Cebu IT Park, Lahug');
+ await page.getByRole('textbox', { name: 'Destination', exact: true }).fill('Test Cebu');
+ await page.getByRole('textbox', { name: 'Destination', exact: true }).press('Enter');
+ await page.getByRole('button', { name: 'Test Cebu address', exact: true }).click();
+ await page.getByRole('button', { name: 'Swap start and destination' }).click();
+ await expect(page.getByRole('textbox', { name: 'Starting point', exact: true })).toHaveValue('Test Cebu address');
+ await page.getByRole('textbox', { name: 'Destination', exact: true }).click();
+ await page.getByRole('button', { name: 'Choose on map', exact: true }).click();
+ await page.keyboard.press('Escape'); await expect(page.locator('.pick-banner')).toHaveCount(0);
+ await page.getByRole('textbox', { name: 'Destination', exact: true }).click(); await page.getByRole('button', { name: 'Choose on map', exact: true }).click();
+ await page.locator('.demo-map').click({ position: { x: 700, y: 400 } });
+ await expect(page.getByRole('textbox', { name: 'Destination', exact: true })).toHaveValue(/^10\.\d+, 123\.\d+$/);
+ await page.screenshot({ path: 'test-results/traveler-desktop.png' });
+ await page.setViewportSize({ width: 390, height: 844 });
+ await expect(page.getByRole('button', { name: 'Create demo', exact: true })).toBeVisible();
+ expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+ await page.screenshot({ path: 'test-results/traveler-mobile.png' });
+});
+test('controller switches sources explicitly; failed provider never silently simulates', async ({ page, request }) => {
+ const room = await (await request.post('/api/demo/rooms')).json();
+ await mock(page); await page.route('**/api/demo/routes', route => route.fulfill({ status: 503, json: { error: 'Live traffic not configured. Enable traffic simulation.' } }));
+ await page.goto(`/demo/${room.id}`); await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
+ await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: 0, conditions: { ...room.conditions, trafficSimulation: false } } });
+ await expect(page.getByRole('alert')).toContainText('Live traffic not configured');
+ await expect(page.locator('.map-source-badges')).toContainText('Live traffic');
+ await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeDisabled();
+ await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: 1, conditions: room.conditions } });
+ await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
+});
+

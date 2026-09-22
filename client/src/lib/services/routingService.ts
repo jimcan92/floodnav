@@ -13,7 +13,10 @@ export interface RoadRoute {
 	distanceMeters: number;
 	durationSeconds: number;
 	steps: NavigationStep[];
-	source: 'osrm' | 'fixture';
+	source: 'osrm' | 'fixture' | 'tomtom';
+	baseDurationSeconds?: number;
+	trafficDelaySeconds?: number;
+	fetchedAt?: string;
 }
 
 // Project to local meters: accurate enough for the small Cebu hazard circles.

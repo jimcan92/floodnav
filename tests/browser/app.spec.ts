@@ -10,7 +10,59 @@ const tile = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
   "base64",
 );
+function weatherResponse(body: any, failed = false) {
+  const stamp = new Date().toISOString();
+  return {
+    assessmentId: body.assessmentId,
+    assessedAt: stamp,
+    modelVersion: "experimental-exposure-v1",
+    routes: body.roads.map((r: any, i: number) => ({
+      key: r.key,
+      score: i ? 40 : 100,
+      coverage: 1,
+      distanceByClass: { LF: 1, MF: 0, HF: 0, VHF: 0, unclassified: 0 },
+      segments: [],
+      reasons: [],
+    })),
+    recommendedKey: body.roads[1]?.key || null,
+    weather: {
+      samples: [
+        {
+          cell: "515:6195",
+          coordinate: [10.31, 123.91],
+          returnedCoordinate: [10.31, 123.91],
+          observedAt: stamp,
+          fetchedAt: stamp,
+          forecastFetchedAt: stamp,
+          rainMmH: 2,
+          forecast: [
+            {
+              endsAt: new Date(Date.now() + 7200000).toISOString(),
+              rainMm3h: 6,
+              probability: 0.7,
+            },
+          ],
+        },
+      ],
+      errors: [],
+    },
+    hazards: {
+      features: [],
+      source: "https://controlmap.mgb.gov.ph",
+      fetchedAt: stamp,
+      verified: true,
+    },
+    loggingStatus: body.loggingEnabled
+      ? failed
+        ? "failed"
+        : "saved"
+      : "disabled",
+  };
+}
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/assessments", (route) =>
+    route.fulfill({ json: weatherResponse(route.request().postDataJSON()) }),
+  );
   await page.route("**/router.project-osrm.org/**", (route) =>
     route.fulfill({ json: direct }),
   );
@@ -40,7 +92,7 @@ test("layers preserve demo state; scenarios block and reroute; map survives mode
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("/");
+  await page.goto("/research");
   await page.getByLabel("Routing mode").selectOption("demo");
   await expect(page.locator("[data-map-layer]")).toHaveAttribute(
     "data-map-layer",
@@ -92,7 +144,7 @@ test("failed API and tiles show recovery; demo works without API", async ({
     route.fulfill({ status: 503 }),
   );
   await page.route("**/mt1.google.com/**", (route) => route.abort());
-  await page.goto("/");
+  await page.goto("/research");
   await expect(
     page.getByRole("button", { name: "Retry routing" }),
   ).toBeVisible();
@@ -117,7 +169,7 @@ test("mobile, map destination, GPS denial, and missing speech", async ({
     });
     Object.defineProperty(window, "speechSynthesis", { value: undefined });
   });
-  await page.goto("/");
+  await page.goto("/research");
   await page.getByRole("button", { name: "Use my GPS location" }).click();
   await expect(
     page.getByText("GPS unavailable or permission denied.", { exact: false }),
@@ -141,7 +193,7 @@ test("mobile, map destination, GPS denial, and missing speech", async ({
 });
 test("arrival and decreasing distance with virtual clock", async ({ page }) => {
   await page.clock.install();
-  await page.goto("/");
+  await page.goto("/research");
   await page.getByLabel("Routing mode").selectOption("demo");
   await page.getByRole("button", { name: "Start / resume simulation" }).click();
   await page.clock.runFor(2000);
@@ -164,7 +216,7 @@ test("late online responses cannot overwrite demo and vehicle changes do not ref
     await pending;
     await route.fulfill({ json: direct }).catch(() => {});
   });
-  await page.goto("/");
+  await page.goto("/research");
   await expect(page.getByText("Loading road routes…")).toBeVisible();
   await page.getByLabel("Routing mode").selectOption("demo");
   release();
@@ -193,7 +245,7 @@ test("routing timeout offers retry and a new trip resets simulation", async ({
 }) => {
   await page.clock.install();
   await page.route("**/router.project-osrm.org/**", () => {});
-  await page.goto("/");
+  await page.goto("/research");
   await expect(page.getByLabel("Routing mode")).toBeEnabled();
   await page.clock.runFor(10001);
   await expect(
@@ -212,103 +264,154 @@ test("routing timeout offers retry and a new trip resets simulation", async ({
   ).toBeEnabled();
 });
 
-test("Supabase readings refresh, block positive water and pause stale feeds", async ({
+test("rainfall is default and sensors remain disabled with a note", async ({
   page,
 }) => {
-  await page.clock.install();
-  let depth = 0;
-  let stamp = new Date().toISOString();
-  await page.route("**/floodnav-test.supabase.co/rest/v1/**", (route) =>
-    route.fulfill({
-      json: [
-        {
-          sensor_id: "esp-001",
-          name: "ESP sensor",
-          affected_road: "Fuente",
-          latitude: 10.3117,
-          longitude: 123.8938,
-          radius_meters: 100,
-          water_depth_cm: depth,
-          observed_at: stamp,
-          received_at: stamp,
-        },
-      ],
-    }),
-  );
-  await page.goto("/");
-  await expect(page.getByLabel("Flood source")).toHaveValue("supabase");
+  await page.goto("/research");
+  await expect(page.getByLabel("Flood source")).toHaveValue("rainfall");
+  await expect(page.locator('option[value="supabase"]')).toBeDisabled();
   await expect(
-    page.getByText("1/1 sensors have fresh readings", { exact: false }),
+    page.getByText("ESP sensors: Temporarily unavailable", { exact: false }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Start / resume simulation" }),
-  ).toBeEnabled();
-  depth = 1;
-  await page.getByRole("button", { name: "Refresh sensors" }).click();
+    page.getByRole("switch", { name: "Research data logging" }),
+  ).toBeChecked();
   await expect(
-    page.getByRole("button", { name: /Primary road route/ }),
-  ).toContainText("Blocked by sensor-reported water");
-  await expect(
-    page.getByRole("button", { name: "Start / resume simulation" }),
-  ).toBeDisabled();
-  depth = 0;
-  stamp = new Date(Date.now() - 6 * 60000).toISOString();
-  await page.getByRole("button", { name: "Refresh sensors" }).click();
-  await expect(
-    page.getByText("0/1 sensors have fresh readings", { exact: false }),
+    page.getByText("Logging enabled", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Start / resume simulation" }),
-  ).toBeDisabled();
-  await page.getByLabel("Routing mode").selectOption("demo");
   await expect(
     page.getByRole("button", { name: "Start / resume simulation" }),
   ).toBeEnabled();
 });
 
-test("connection form persists public settings and rejects secret keys without a request", async ({
+test("logging switch disables all subsequent save requests and persists before first request on reload", async ({
   page,
 }) => {
-  let requests = 0;
-  await page.route("**/new-project.supabase.co/rest/v1/**", (route) => {
-    requests++;
-    return route.fulfill({ json: [] });
+  const flags: boolean[] = [];
+  await page.route("**/api/assessments", (route) => {
+    const body = route.request().postDataJSON();
+    flags.push(body.loggingEnabled);
+    return route.fulfill({ json: weatherResponse(body) });
   });
-  await page.goto("/");
-  await expect(page.getByLabel("Routing mode")).toBeEnabled();
-  await page.getByText("Supabase connection", { exact: true }).click();
-  await page
-    .getByLabel("Supabase project URL")
-    .fill("https://new-project.supabase.co");
-  await page
-    .getByLabel("Supabase publishable key")
-    .fill("sb_secret_do_not_send");
-  await page.getByRole("button", { name: "Test and save connection" }).click();
+  await page.goto("/research");
+  const toggle = page.getByRole("switch", { name: "Research data logging" });
   await expect(
-    page.getByText(
-      "Use a publishable key, never a secret key in the frontend.",
-      { exact: true },
-    ),
+    page.getByText("Logging enabled", { exact: true }),
   ).toBeVisible();
-  expect(requests).toBe(0);
-  await page
-    .getByLabel("Supabase publishable key")
-    .fill("sb_publishable_new_project");
-  await page.getByRole("button", { name: "Test and save connection" }).click();
+  await toggle.uncheck();
   await expect(
-    page.getByText("Connected: 0 sensors found.", { exact: false }),
+    page.getByText("Logging disabled", { exact: true }),
   ).toBeVisible();
+  await expect.poll(() => flags.at(-1)).toBe(false);
+  flags.length = 0;
+  await page.reload();
+  await expect(
+    page.getByRole("switch", { name: "Research data logging" }),
+  ).not.toBeChecked();
+  await expect.poll(() => flags.length).toBeGreaterThan(0);
+  expect(flags.every((flag) => flag === false)).toBe(true);
+  await page.getByRole("switch", { name: "Research data logging" }).check();
+  await expect.poll(() => flags.at(-1)).toBe(true);
+});
+
+test("save failure supports idempotent retry, and disabling removes retry", async ({
+  page,
+}) => {
+  const requests: any[] = [];
+  await page.route("**/api/assessments", (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    return route.fulfill({ json: weatherResponse(body, true) });
+  });
+  await page.goto("/research");
+  await expect(
+    page.getByText("Research log not saved", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Retry research save" }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[0].assessmentId).toBe(requests[1].assessmentId);
+  await page.getByRole("switch", { name: "Research data logging" }).uncheck();
+  await expect(
+    page.getByRole("button", { name: "Retry research save" }),
+  ).toHaveCount(0);
+  await expect.poll(() => requests.at(-1).loggingEnabled).toBe(false);
+});
+
+test("late enabled save response cannot overwrite disabled state", async ({
+  page,
+}) => {
+  let release: () => void = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = false;
+  await page.route("**/api/assessments", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body.loggingEnabled) {
+      started = true;
+      await pending;
+    }
+    await route.fulfill({ json: weatherResponse(body, true) }).catch(() => {});
+  });
+  await page.goto("/research");
+  await expect.poll(() => started).toBe(true);
+  await page.getByRole("switch", { name: "Research data logging" }).uncheck();
+  release();
+  await expect(
+    page.getByText("Logging disabled", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Retry research save" }),
+  ).toHaveCount(0);
+});
+
+test("recommendation is manual, does not block simulation, and survives layer changes", async ({
+  page,
+}) => {
+  const bypass = JSON.parse(
+    readFileSync(
+      new URL("../../client/src/lib/data/demoBypass.json", import.meta.url),
+      "utf8",
+    ).replace(/^\uFEFF/, ""),
+  );
+  await page.route("**/router.project-osrm.org/**", (route) =>
+    route.fulfill({
+      json: { ...direct, routes: [direct.routes[0], bypass.routes[0]] },
+    }),
+  );
+  await page.goto("/research");
+  const primary = page.getByRole("button", { name: /Primary road route/ });
+  const alternative = page.getByRole("button", {
+    name: /Alternative road route/,
+  });
+  await expect(alternative).toContainText("Lower estimated exposure");
+  await expect(primary).toHaveAttribute("aria-pressed", "true");
+  await alternative.click();
+  await expect(alternative).toHaveAttribute("aria-pressed", "true");
+  await page.getByLabel("Satellite", { exact: true }).check();
+  await expect(alternative).toHaveAttribute("aria-pressed", "true");
   await expect(
     page.getByRole("button", { name: "Start / resume simulation" }),
-  ).toBeDisabled();
-  await page.reload();
-  await expect(page.getByLabel("Routing mode")).toBeEnabled();
-  await page.getByText("Supabase connection", { exact: true }).click();
-  await expect(page.getByLabel("Supabase project URL")).toHaveValue(
-    "https://new-project.supabase.co",
-  );
-  await page.getByRole("button", { name: "Use environment defaults" }).click();
-  await expect(page.getByLabel("Supabase project URL")).toHaveValue(
-    "https://floodnav-test.supabase.co",
-  );
+  ).toBeEnabled();
 });
+
+test("weather failure leaves route preview and simulator usable", async ({
+  page,
+}) => {
+  await page.route("**/api/assessments", (route) =>
+    route.fulfill({ status: 503, json: { error: "Weather unavailable" } }),
+  );
+  await page.goto("/research");
+  await expect(page.getByRole("alert")).toContainText("Assessment unavailable");
+  await expect(
+    page.getByRole("button", { name: /Primary road route/ }),
+  ).toContainText("Assessment unavailable");
+  await expect(
+    page.getByRole("button", { name: "Start / resume simulation" }),
+  ).toBeEnabled();
+  await page.getByLabel("Routing mode").selectOption("demo");
+  await expect(
+    page.getByRole("button", { name: /Primary road route/ }),
+  ).toContainText("Bundled demo");
+});
+

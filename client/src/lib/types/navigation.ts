@@ -70,7 +70,7 @@ export interface NavigationStep {
 }
 
 export interface RouteOption {
-	source: 'osrm' | 'fixture';
+	source: 'osrm' | 'fixture' | 'tomtom';
 	id: 'primary' | 'alternative_safe';
 	name: string;
 	isAlternativeSafeRoute: boolean;

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import type * as Leaflet from 'leaflet';
 	import 'leaflet/dist/leaflet.css';
+	import type { HazardFeature, WeatherSample } from '$lib/types/rainfall';
 	import type {
 		Coordinate,
 		FloodHazardZone,
@@ -18,6 +19,8 @@
 		vehicle,
 		floodZones,
 		floodSource,
+		hazardFeatures = [],
+		weatherSamples = [],
 		onSelectRoute,
 		onMapClick
 	}: {
@@ -28,7 +31,9 @@
 		vehiclePosition: Coordinate;
 		vehicle: VehicleCategory;
 		floodZones: FloodHazardZone[];
-		floodSource: 'sensor' | 'simulated';
+		floodSource: 'sensor' | 'simulated' | 'rainfall';
+		hazardFeatures?: HazardFeature[];
+		weatherSamples?: WeatherSample[];
 		onSelectRoute: (id: RouteOption['id']) => void;
 		onMapClick?: (point: Coordinate) => void;
 	} = $props();
@@ -101,6 +106,30 @@
 	$effect(() => {
 		if (!ready || !map) return;
 		group.clearLayers();
+		const colors = { LF: '#c4b5fd', MF: '#a78bfa', HF: '#7c3aed', VHF: '#312e81' };
+		for (const feature of hazardFeatures) {
+			L.geoJSON(feature as GeoJSON.Feature, {
+				style: { color: colors[feature.properties.susceptibility], weight: 1, fillOpacity: 0.2 },
+				onEachFeature: (_feature, layer) => {
+					const text = document.createElement('div');
+					text.textContent = `MGB ${feature.properties.susceptibility} susceptibility · polygon ${feature.properties.id}. Not a current flood observation.`;
+					layer.bindPopup(text);
+				}
+			}).addTo(group);
+		}
+		for (const sample of weatherSamples) {
+			L.circleMarker(sample.coordinate, {
+				radius: 5,
+				color: '#0284c7',
+				fillColor: '#7dd3fc',
+				fillOpacity: 0.9,
+				bubblingMouseEvents: false
+			})
+				.addTo(group)
+				.bindTooltip(
+					`OpenWeather sample: ${sample.rainMmH} mm/h · ${new Date(sample.observedAt).toLocaleString()} · grid center, not street-level`
+				);
+		}
 		const marker = (point: Coordinate, label: string, color: string) =>
 			L.circleMarker(point, {
 				radius: 8,
@@ -134,7 +163,11 @@
 				dashArray: '8 8',
 				bubblingMouseEvents: false
 			}).addTo(group);
-			route.bindTooltip('Alternative avoiding displayed hazard zones');
+			route.bindTooltip(
+				floodSource === 'rainfall'
+					? 'Alternative road route — experimental exposure assessment'
+					: 'Alternative avoiding displayed hazard zones'
+			);
 			route.on('click', () => onSelectRoute('alternative_safe'));
 		}
 		if (activeRoute) {
@@ -171,7 +204,11 @@
 
 <div class="relative h-full min-h-[360px]" data-map-layer={layer}>
 	<div bind:this={container} class="h-full min-h-[360px]"></div>
-	<div class="map-caption">{layer} · Floods: {floodSource} · Traffic: simulated</div>
+	<div class="map-caption">
+		{layer} · {floodSource === 'rainfall'
+			? 'MGB susceptibility + OpenWeather samples'
+			: `Floods: ${floodSource}`} · Traffic: simulated
+	</div>
 	{#if tileError}<div role="status" class="map-error">
 			Google map tiles unavailable. Routes and demo controls remain available.<button
 				onclick={() => {

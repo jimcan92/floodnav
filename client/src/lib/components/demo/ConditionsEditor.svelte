@@ -6,6 +6,7 @@
 	import type { Coordinate, DemoScenario } from '$lib/types/navigation';
 	let {
 		simulation,
+		localOnly = false,
 		picked,
 		selectedZone,
 		onpick,
@@ -14,6 +15,7 @@
 		onpreview
 	}: {
 		simulation: SimulationState;
+		localOnly?: boolean;
 		picked: { kind: 'traffic' | 'flood'; center: Coordinate; token: number } | null;
 		selectedZone: string | null;
 		onpick: (kind: 'traffic' | 'flood') => void;
@@ -92,9 +94,11 @@
 			dirty = false;
 			draft = clone(simulation.conditions);
 			version = simulation.revision;
-			message = preset
-				? 'Preset published to everyone. Trips are unchanged.'
-				: 'Published to everyone';
+			message = localOnly
+				? 'Applied on this device only'
+				: preset
+					? 'Preset published to everyone. Trips are unchanged.'
+					: 'Published to everyone';
 		} else {
 			message =
 				simulation.revision !== version
@@ -107,7 +111,11 @@
 <div class="controller-heading">
 	<div class="eyebrow">SCENARIO CONTROL</div>
 	<h1>Change the journey.</h1>
-	<p>Applied traffic and flood changes affect everyone’s routes.</p>
+	<p>
+		{localOnly
+			? 'Offline demo changes affect this device only.'
+			: 'Applied traffic and flood changes affect everyone’s routes.'}
+	</p>
 </div>
 {#if dirty && simulation.revision !== version}
 	<div class="conflict-review" role="status">
@@ -151,6 +159,7 @@
 				><input
 					type="checkbox"
 					aria-label="Traffic simulation"
+					disabled={localOnly}
 					bind:checked={draft.trafficSimulation}
 					onchange={changed}
 				/><span></span></label
@@ -180,6 +189,7 @@
 				><input
 					type="checkbox"
 					aria-label="Rainfall/Flood simulation"
+					disabled={localOnly}
 					bind:checked={draft.floodSimulation}
 					onchange={changed}
 				/><span></span></label
@@ -324,7 +334,7 @@
 			>{message ||
 				(dirty
 					? 'Unpublished changes'
-					: `Shared conditions · revision ${simulation.revision}`)}</small
+					: `${localOnly ? 'Local demo' : 'Shared conditions'} · revision ${simulation.revision}`)}</small
 		>{#if dirty}<button
 				type="button"
 				class="text-button"
@@ -340,7 +350,11 @@
 </form>
 <details class="preset-section">
 	<summary>Ready-made demo scenarios</summary>
-	<p>Presets change shared conditions near Fuente → SM City. Trips are not reset.</p>
+	<p>
+		{localOnly
+			? 'Presets change this device’s offline demo only.'
+			: 'Presets change shared conditions near Fuente → SM City.'} Trips are not reset.
+	</p>
 	<div class="preset-buttons">
 		{#each [['dry', 'Dry roads'], ['bypass', 'Flood + bypass'], ['blocked', 'All blocked']] as [id, title]}<button
 				disabled={saving || simulation.revision !== version}

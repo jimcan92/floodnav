@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { pwaState } from '$lib/services/pwaState.svelte';
+	import { validateConditions } from '$lib/services/simulationValidation';
+	import { scenarioConditions } from '$lib/data/demoScenarios';
 	import { matchGpsToRoute, usableGpsFix } from '$lib/services/gpsNavigation';
 	import { haversineDistanceKm } from '$lib/services/trafficService';
 	import { VEHICLE_TRAVEL_PROFILES } from '$lib/services/demoSimulation';
@@ -41,6 +44,14 @@
 	let mounted = $state(false),
 		shared = $state<SimulationState | null>(null),
 		connected = $state(false);
+	let offlineDemo = $state(false);
+	let localSimulation = $state<SimulationState | null>(null);
+	const online = $derived(pwaState.online);
+	const currentSimulation = $derived(offlineDemo ? localSimulation : shared);
+	$effect(() => {
+		pwaState.busy = started || previewZones !== null;
+	});
+
 	let origin = $state(initialOrigin()),
 		destination = $state(initialDestination()),
 		vehicleId = $state(DEFAULT_VEHICLE_CATEGORY.id);
@@ -90,7 +101,7 @@
 		disposed = false;
 	let syncError = $state('');
 	const conditions = $derived(
-		shared?.conditions || { trafficSimulation: false, floodSimulation: false, zones: [] }
+		currentSimulation?.conditions || { trafficSimulation: false, floodSimulation: false, zones: [] }
 	);
 	const trafficSimulation = $derived(conditions.trafficSimulation);
 	const floodSimulation = $derived(conditions.floodSimulation);
@@ -98,8 +109,8 @@
 		requestedMode || (trafficSimulation || floodSimulation ? 'demo' : 'gps')
 	);
 	const gpsTravel = $derived(travelMode === 'gps');
-	const editable = $derived(mounted && connected);
-	const sharedReady = $derived(!!shared);
+	const editable = $derived(mounted && (offlineDemo || connected));
+	const sharedReady = $derived(!!currentSimulation);
 	const vehicle = $derived(
 		VEHICLE_CATEGORIES.find((v) => v.id === vehicleId) || DEFAULT_VEHICLE_CATEGORY
 	);
@@ -205,6 +216,10 @@
 		connected = true;
 		syncError = '';
 		if (shared && next.revision <= shared.revision) return;
+		if (offlineDemo) {
+			shared = next;
+			return;
+		}
 		const previous = shared?.conditions;
 		if (
 			previous &&
@@ -225,7 +240,7 @@
 		rerouteGeneration++;
 	}
 	async function syncConditions() {
-		if (syncing || disposed) return;
+		if (syncing || disposed || !navigator.onLine) return;
 		syncing = true;
 		try {
 			const next = await api('/api/simulation');
@@ -267,11 +282,13 @@
 	}
 	onMount(() => {
 		mounted = true;
+		pwaState.online = navigator.onLine;
+		if (new URLSearchParams(location.search).get('offline-demo') === '1') startOfflineDemo();
 		void syncConditions();
 		const ticker = setInterval(() => {
 			clock = Date.now();
 			if (!lastSnapshot || clock - lastSnapshot > 15000) connected = false;
-			if (!connected && !gpsTravel) playing = false;
+			if (!connected && !gpsTravel && !offlineDemo) playing = false;
 			if (
 				!gpsTravel &&
 				playing &&
@@ -290,7 +307,7 @@
 			if (!document.hidden) void syncConditions();
 		}, 2000);
 		const refresh = setInterval(() => {
-			if (document.hidden) return;
+			if (document.hidden || !navigator.onLine || offlineDemo) return;
 			if (!conditions.trafficSimulation && (!playing || gpsTravel)) {
 				if (started && ownRoad && !arrived) rebaseAtCurrentPosition();
 				routeRequest++;
@@ -306,8 +323,9 @@
 		};
 		const offline = () => {
 			connected = false;
-			if (!gpsTravel) playing = false;
+			if (!gpsTravel && !offlineDemo) playing = false;
 		};
+		window.addEventListener('floodnav:offline-demo', startOfflineDemo);
 		window.addEventListener('focus', focus);
 		window.addEventListener('online', focus);
 		window.addEventListener('offline', offline);
@@ -317,6 +335,8 @@
 			clearInterval(ticker);
 			clearInterval(poll);
 			clearInterval(refresh);
+			pwaState.busy = false;
+			window.removeEventListener('floodnav:offline-demo', startOfflineDemo);
 			window.removeEventListener('focus', focus);
 			window.removeEventListener('online', focus);
 			window.removeEventListener('offline', offline);
@@ -330,6 +350,8 @@
 		simulated: boolean,
 		signal: AbortSignal
 	) {
+		if (!navigator.onLine || offlineDemo)
+			throw new Error('Internet is needed for new routes. Use the bundled offline demo.');
 		if (simulated) return fetchRoadRoutes(start, end, signal);
 		try {
 			const response = await fetch('/api/demo/routes', {
@@ -614,6 +636,25 @@
 		);
 	}
 	async function apply(conditions: Conditions, revision: number, preset?: DemoScenario) {
+		if (offlineDemo && localSimulation) {
+			try {
+				const next = validateConditions(preset ? scenarioConditions(preset) : conditions);
+				localSimulation = {
+					revision: localSimulation.revision + 1,
+					conditions: { ...next, trafficSimulation: true, floodSimulation: true },
+					updatedAt: new Date().toISOString()
+				};
+				error = '';
+				return true;
+			} catch (e) {
+				error = e instanceof Error ? e.message : 'Invalid local conditions';
+				return false;
+			}
+		}
+		if (!navigator.onLine) {
+			error = 'Internet is needed to publish shared changes.';
+			return false;
+		}
 		try {
 			receive(await api('/api/simulation', 'PATCH', { conditions, revision, preset }));
 			error = '';
@@ -628,11 +669,11 @@
 	}
 	// Only condition, vehicle, and route changes trigger an automatic search, not every travel tick.
 	$effect(() => {
-		const revision = shared?.revision;
+		const revision = currentSimulation?.revision;
 		void vehicleId;
 		void roads;
 		void selectedKey;
-		if (revision === undefined || !mounted || !connected || busy) return;
+		if (revision === undefined || !editable || busy) return;
 		untrack(() => {
 			candidates = [];
 			rerouteGeneration++;
@@ -643,6 +684,11 @@
 	});
 	async function findAlternative() {
 		if (!ownRoad || !editable) return;
+		if (offlineDemo && (progress > 0 || roads.length < 2)) {
+			notice =
+				'New routes need internet. Restart the example trip to compare bundled alternatives.';
+			return;
+		}
 		rerouting = true;
 		notice = '';
 		// Keep candidate origins at the exact current position while the provider responds.
@@ -701,6 +747,43 @@
 		notice = 'Alternative selected. Resume when ready.';
 		lastSpeech = '';
 	}
+	function startOfflineDemo() {
+		stopTrip();
+		offlineDemo = true;
+		localSimulation = {
+			revision: 0,
+			conditions: scenarioConditions('dry'),
+			updatedAt: new Date().toISOString()
+		};
+		requestedMode = 'demo';
+		origin = initialOrigin();
+		destination = initialDestination();
+		fixture = true;
+		roads = DEMO_ROADS;
+		selectedKey = DEMO_ROADS[0].key;
+		previewZones = null;
+		drawerOpen = false;
+		picked = null;
+		selectedZone = null;
+		syncError = '';
+		error = '';
+		routeError = '';
+		rainfallError = '';
+		notice = '';
+	}
+	function exitOfflineDemo() {
+		if (!online) return;
+		stopTrip();
+		offlineDemo = false;
+		localSimulation = null;
+		fixture = false;
+		requestedMode = '';
+		previewZones = null;
+		drawerOpen = false;
+		roads = [];
+		void syncConditions();
+	}
+
 	function loadExampleTrip() {
 		stopTrip();
 		origin = initialOrigin();
@@ -748,7 +831,8 @@
 		{alternative}
 		zones={visibleZones}
 		picking={!!picking}
-		liveTraffic={!conditions.trafficSimulation}
+		liveTraffic={!conditions.trafficSimulation && online && !offlineDemo}
+		offline={offlineDemo || !online}
 		{assessment}
 		onpick={mapPick}
 		onzone={(id) => {
@@ -758,6 +842,7 @@
 		ontrafficstatus={(value) => (trafficStatus = value)}
 	/>
 	<div class="map-source-badges">
+		{#if offlineDemo}<span>Offline demo · this device only</span>{/if}
 		<span
 			><i class:live={!conditions.trafficSimulation}></i>{conditions.trafficSimulation
 				? 'Simulated traffic'
@@ -826,14 +911,14 @@
 						<LocationPicker
 							label="Starting point"
 							value={displayedOrigin}
-							disabled={!editable}
+							disabled={!editable || offlineDemo}
 							onchoose={(p) => changeWaypoint('origin', p)}
 							onpick={() => (picking = 'origin')}
 							ongps={locate}
 						/><LocationPicker
 							label="Destination"
 							value={displayedDestination}
-							disabled={!editable}
+							disabled={!editable || offlineDemo}
 							onchoose={(p) => changeWaypoint('destination', p)}
 							onpick={() => (picking = 'destination')}
 						/>
@@ -841,7 +926,7 @@
 					<button
 						class="swap-button icon-button"
 						aria-label="Swap start and destination"
-						disabled={!editable}
+						disabled={!editable || offlineDemo}
 						onclick={() => {
 							const a = origin,
 								b = destination;
@@ -897,6 +982,7 @@
 					>Travel mode
 					<select
 						aria-label="Travel mode"
+						disabled={offlineDemo}
 						value={travelMode}
 						onchange={(event) => (requestedMode = event.currentTarget.value as 'gps' | 'demo')}
 					>
@@ -946,7 +1032,13 @@
 		{/if}
 		<footer class="simulation-footer">
 			<span class="connection-dot" class:online={connected}></span>
-			<span>{connected ? 'Shared conditions connected' : 'Connecting…'}</span>
+			<span
+				>{offlineDemo
+					? 'Local offline demo'
+					: connected
+						? 'Shared conditions connected'
+						: 'Connecting…'}</span
+			>
 			<button
 				class="text-button"
 				onclick={() => (drawerOpen = !drawerOpen)}
@@ -1017,27 +1109,35 @@
 			<p>Demo playback only · live GPS follows your actual movement.</p>
 		</div>
 
-		{#if shared}<ConditionsEditor
-				simulation={shared}
-				{picked}
-				{selectedZone}
-				onpick={(kind) => {
-					picking = kind;
-					if (window.innerWidth < 760) drawerOpen = false;
-				}}
-				oncancelpick={() => (picking = null)}
-				onapply={apply}
-				onpreview={(zones) => (previewZones = zones)}
-			/>{:else}<p>Loading shared conditions…</p>{/if}
+		{#if currentSimulation}{#key offlineDemo}<ConditionsEditor
+					simulation={currentSimulation}
+					localOnly={offlineDemo}
+					{picked}
+					{selectedZone}
+					onpick={(kind) => {
+						picking = kind;
+						if (window.innerWidth < 760) drawerOpen = false;
+					}}
+					oncancelpick={() => (picking = null)}
+					onapply={apply}
+					onpreview={(zones) => (previewZones = zones)}
+				/>{/key}{:else}<p>Loading shared conditions…</p>{/if}
 		<p class="controller-disclaimer">
-			No login required · Applied changes affect everyone.<br />Travel progress belongs to this
-			browser only.
+			{offlineDemo
+				? 'Local changes stay on this device and are never uploaded.'
+				: 'No login required · Applied changes affect everyone.'}<br />Travel progress belongs to
+			this browser only.
 		</p>
 		<button class="text-button" disabled={!editable} onclick={loadExampleTrip}
 			>Load example trip: Fuente → SM City</button
 		>
 	</aside>
 	<div class="demo-alerts" aria-live="polite">
+		{#if offlineDemo}<div class="info-banner">
+				<span>Offline route diagram · map tiles and live data need internet.</span
+				>{#if online}<button onclick={exitOfflineDemo}>Return to shared live mode</button>{/if}
+			</div>{/if}
+
 		{#if picking}<div class="pick-banner">
 				<Icon name="pin" /><span
 					>Click the map to place {picking === 'origin'
@@ -1047,7 +1147,7 @@
 							: `a ${picking} area`}</span
 				><button onclick={() => (picking = null)}>Cancel</button>
 			</div>{/if}
-		{#if !connected && shared}<div class="info-banner">
+		{#if !connected && shared && !offlineDemo}<div class="info-banner">
 				Shared conditions disconnected. {gpsTravel
 					? 'GPS travel remains available.'
 					: 'Travel paused.'}
@@ -1060,7 +1160,7 @@
 				{gpsMessage}
 			</div>{/if}
 
-		{#if syncError}<div class="error-banner" role="alert">
+		{#if syncError && !offlineDemo}<div class="error-banner" role="alert">
 				{syncError}<button onclick={() => void syncConditions()}>Retry synchronization</button>
 			</div>{/if}
 		{#if blocked}<div class="warning-banner">

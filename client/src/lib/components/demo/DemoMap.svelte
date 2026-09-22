@@ -17,6 +17,7 @@
 		picking = false,
 		liveTraffic = false,
 		followPosition = false,
+		offline = false,
 		assessment = null,
 		onpick,
 		onzone,
@@ -31,6 +32,7 @@
 		picking?: boolean;
 		liveTraffic?: boolean;
 		followPosition?: boolean;
+		offline?: boolean;
 		assessment?: ExposureAssessment | null;
 		onpick: (p: Coordinate) => void;
 		onzone?: (id: string) => void;
@@ -88,7 +90,7 @@
 					if (map.hasLayer(bases[name])) tileError = true;
 				});
 			}
-			bases.Streets.addTo(map);
+			if (!offline) bases.Streets.addTo(map);
 			group = L.layerGroup().addTo(map);
 			car = L.marker(position, {
 				interactive: false,
@@ -113,6 +115,12 @@
 			map?.remove();
 		};
 	});
+	$effect(() => {
+		if (!ready) return;
+		for (const base of Object.values(bases)) map.removeLayer(base);
+		if (!offline) bases[layer].addTo(map);
+	});
+
 	$effect(() => {
 		if (!ready) return;
 		group.clearLayers();
@@ -229,7 +237,13 @@
 	});
 </script>
 
-<div class="demo-map" class:picking data-map-layer={layer} bind:this={container}></div>
+<div
+	class="demo-map"
+	class:picking
+	class:offline
+	data-map-layer={layer}
+	bind:this={container}
+></div>
 <div class="map-tools">
 	<button
 		class="map-tool"
@@ -245,17 +259,18 @@
 		>
 	</div>
 </div>
-<div class="layer-control">
-	<button class="layer-button" onclick={() => (layerOpen = !layerOpen)} aria-expanded={layerOpen}
-		><Icon name="layers" size={18} />{layer}</button
-	>{#if layerOpen}<div class="layer-options">
-			{#each ['Streets', 'Satellite', 'Hybrid'] as name}<button
-					class:active={name === layer}
-					onclick={() => changeLayer(name)}>{name}</button
-				>{/each}
-		</div>{/if}
-</div>
-{#if tileError}<div class="tile-notice">
+{#if !offline}<div class="layer-control">
+		<button class="layer-button" onclick={() => (layerOpen = !layerOpen)} aria-expanded={layerOpen}
+			><Icon name="layers" size={18} />{layer}</button
+		>{#if layerOpen}<div class="layer-options">
+				{#each ['Streets', 'Satellite', 'Hybrid'] as name}<button
+						class:active={name === layer}
+						onclick={() => changeLayer(name)}>{name}</button
+					>{/each}
+			</div>{/if}
+	</div>
+{/if}
+{#if tileError && !offline}<div class="tile-notice">
 		Map tiles unavailable. Travel controls still work.<button
 			onclick={() => {
 				tileError = false;

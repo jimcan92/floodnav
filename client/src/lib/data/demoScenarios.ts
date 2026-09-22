@@ -35,3 +35,21 @@ export function scenarioFloods(scenario: DemoScenario): FloodHazardZone[] {
 		zone(DEMO_ROADS[1].polyline[Math.floor(DEMO_ROADS[1].polyline.length / 2)], 'bypass-flood')
 	];
 }
+
+export function scenarioConditions(scenario: DemoScenario): import('../types/demo').Conditions {
+	return {
+		trafficSimulation: true,
+		floodSimulation: true,
+		zones: scenarioFloods(scenario).map((z) => ({
+			id: z.id,
+			kind: 'flood',
+			name: z.name,
+			center: z.center,
+			radiusMeters: z.radiusMeters,
+			depthCm: z.depthCm,
+			rainMmH: 10,
+			level: 'moderate',
+			enabled: true
+		}))
+	};
+}

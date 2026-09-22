@@ -1639,3 +1639,11 @@
 	background: white;
 	color: #334155;
 }
+
+.demo-map.offline {
+	background-color: #eef3f7;
+	background-image:
+		linear-gradient(#cbd8e555 1px, transparent 1px),
+		linear-gradient(90deg, #cbd8e555 1px, transparent 1px);
+	background-size: 32px 32px;
+}

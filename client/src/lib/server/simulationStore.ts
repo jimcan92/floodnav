@@ -1,6 +1,6 @@
 import type { Conditions, SimulationState } from '../types/demo';
 import { DemoError, validateConditions } from './simulationValidation';
-import { scenarioFloods } from '../data/demoScenarios';
+import { scenarioConditions } from '../data/demoScenarios';
 import type { DemoScenario } from '../types/navigation';
 
 type Settings = {
@@ -63,21 +63,7 @@ export class SimulationStore {
 		let conditions = validateConditions(input);
 		if (preset !== undefined) {
 			if (!['dry', 'bypass', 'blocked'].includes(preset)) throw new DemoError('Invalid preset.');
-			conditions = {
-				trafficSimulation: true,
-				floodSimulation: true,
-				zones: scenarioFloods(preset).map((z) => ({
-					id: z.id,
-					kind: 'flood',
-					name: z.name,
-					center: z.center,
-					radiusMeters: z.radiusMeters,
-					depthCm: z.depthCm,
-					rainMmH: 10,
-					level: 'moderate',
-					enabled: true
-				}))
-			};
+			conditions = scenarioConditions(preset);
 		}
 		return this.query('rpc/update_simulation', { p_revision: revision, p_conditions: conditions });
 	}

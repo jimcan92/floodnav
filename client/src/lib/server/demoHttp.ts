@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { DemoError } from './demoRooms';
+import { DemoError } from './simulationValidation';
 export async function body(request: Request) {
 	if (!request.headers.get('content-type')?.includes('application/json'))
 		throw new DemoError('JSON required.', 415);

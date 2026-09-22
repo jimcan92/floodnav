@@ -1,11 +1,11 @@
 <script lang="ts">
+	import { VEHICLE_TRAVEL_PROFILES } from '$lib/services/demoSimulation';
 	import { onMount, untrack } from 'svelte';
-	import { goto } from '$app/navigation';
 	import Icon from './Icon.svelte';
 	import DemoMap from './DemoMap.svelte';
 	import LocationPicker from './LocationPicker.svelte';
 	import ConditionsEditor from './ConditionsEditor.svelte';
-	import type { Conditions, DemoRoom, SimulationZone, Telemetry, Waypoint } from '$lib/types/demo';
+	import type { Conditions, SimulationState, SimulationZone, Waypoint } from '$lib/types/demo';
 	import type { Coordinate, DemoScenario } from '$lib/types/navigation';
 	import type { ExposureAssessment } from '$lib/types/rainfall';
 	import { DEFAULT_VEHICLE_CATEGORY, VEHICLE_CATEGORIES } from '$lib/data/vehicleCategories';
@@ -13,23 +13,21 @@
 	import {
 		cumulativeDistances,
 		fetchRoadRoutes,
-		intersectsFlood,
 		positionAt,
 		type RoadRoute
 	} from '$lib/services/routingService';
 	import {
 		advanceTimed,
-		floodZones,
 		remainingPath,
-		secondsRemaining,
-		timedSegments
+		evaluateSimulation,
+		rankSimulationRoutes,
+		formatTravelTime
 	} from '$lib/services/demoSimulation';
 	import { speechService } from '$lib/services/speechService';
 	import { sampleRate } from '$lib/services/rainfallAssessment';
 	import { demoId } from '$lib/services/demoId';
 	import './demo.css';
 
-	let { roomId = '', controller = false }: { roomId?: string; controller?: boolean } = $props();
 	const initialOrigin = (): Waypoint => ({
 		name: 'Fuente Osmeña Circle',
 		coordinate: [...DEMO_ORIGIN]
@@ -39,9 +37,8 @@
 		coordinate: [...DEMO_DESTINATION]
 	});
 	let mounted = $state(false),
-		room = $state<DemoRoom | null>(null),
-		connected = $state(false),
-		travelerId = $state('');
+		shared = $state<SimulationState | null>(null),
+		connected = $state(false);
 	let origin = $state(initialOrigin()),
 		destination = $state(initialDestination()),
 		vehicleId = $state(DEFAULT_VEHICLE_CATEGORY.id);
@@ -52,7 +49,6 @@
 	let playing = $state(false),
 		started = $state(false),
 		busy = $state(false),
-		creating = $state(false),
 		muted = $state(false),
 		collapsed = $state(false);
 	let notice = $state(''),
@@ -71,65 +67,48 @@
 	let candidates = $state<RoadRoute[]>([]),
 		previewZones = $state<SimulationZone[] | null>(null),
 		rerouting = $state(false),
-		drawerOpen = $state(true),
+		drawerOpen = $state(false),
 		clock = $state(Date.now());
-	let lastReset = -1,
-		sourceIdentity = '',
-		routeGeneration = 0,
+	let routeGeneration = 0,
 		rerouteGeneration = 0,
-		eventSource: EventSource | null = null,
-		telemetryBusy = false,
-		lastTelemetry = '',
 		lastSpeech = '',
-		skipHydrated = false,
 		lastSnapshot = 0;
+	let syncing = false,
+		disposed = false;
+	let syncError = $state('');
 	const conditions = $derived(
-		room?.conditions || { trafficSimulation: true, floodSimulation: true, zones: [] }
+		shared?.conditions || { trafficSimulation: true, floodSimulation: true, zones: [] }
 	);
 	const trafficSimulation = $derived(conditions.trafficSimulation);
 	const floodSimulation = $derived(conditions.floodSimulation);
-	const roomReady = $derived(!roomId || !!room);
-	const owner = $derived(!roomId || (!!room && room.travelerId === travelerId));
-	const editable = $derived(mounted && !controller && owner && (!roomId || connected));
+	const editable = $derived(mounted && connected);
+	const sharedReady = $derived(!!shared);
 	const vehicle = $derived(
 		VEHICLE_CATEGORIES.find((v) => v.id === vehicleId) || DEFAULT_VEHICLE_CATEGORY
 	);
 	const ownRoad = $derived(roads.find((r) => r.key === selectedKey) || roads[0] || null);
-	const observed = $derived(controller || !owner);
-	const active = $derived(observed ? room?.telemetry?.route || null : ownRoad);
-	const currentProgress = $derived(observed ? room?.telemetry?.progress || 0 : progress);
-	const displayedOrigin = $derived(observed ? room?.telemetry?.origin || origin : origin);
-	const displayedDestination = $derived(
-		observed ? room?.telemetry?.destination || destination : destination
-	);
-	const position = $derived(
-		observed
-			? room?.telemetry?.position || displayedOrigin.coordinate
-			: ownRoad
-				? positionAt(ownRoad.polyline, progress)
-				: origin.coordinate
-	);
+	const active = $derived(ownRoad);
+	const currentProgress = $derived(progress);
+	const displayedOrigin = $derived(origin);
+	const displayedDestination = $derived(destination);
+	const position = $derived(ownRoad ? positionAt(ownRoad.polyline, progress) : origin.coordinate);
 	const visibleZones = $derived(
-		(controller && previewZones ? previewZones : conditions.zones).filter((z) =>
-			z.kind === 'traffic' ? conditions.trafficSimulation : conditions.floodSimulation
-		)
+		(drawerOpen || picking === 'traffic' || picking === 'flood') && previewZones
+			? previewZones
+			: conditions.zones.filter((z) => (z.kind === 'traffic' ? trafficSimulation : floodSimulation))
 	);
-	const floods = $derived(conditions.floodSimulation ? floodZones(conditions.zones) : []);
-	const timing = $derived(
-		ownRoad ? timedSegments(ownRoad, conditions.trafficSimulation ? conditions.zones : []) : []
+	const evaluation = $derived(
+		ownRoad
+			? evaluateSimulation(ownRoad, conditions, vehicle.maxSafeWaterDepthCm, progress, vehicle.id)
+			: null
 	);
+	const ranked = $derived(
+		rankSimulationRoutes(roads, conditions, vehicle.maxSafeWaterDepthCm, vehicle.id)
+	);
+	const timing = $derived(evaluation?.segments || []);
 	const total = $derived(ownRoad ? cumulativeDistances(ownRoad.polyline).at(-1) || 0 : 0);
-	const remainingSeconds = $derived(
-		observed ? room?.telemetry?.remainingSeconds || 0 : secondsRemaining(timing, progress)
-	);
-	const blocked = $derived(
-		!!ownRoad &&
-			floods.some(
-				(z) =>
-					z.depthCm > vehicle.maxSafeWaterDepthCm &&
-					intersectsFlood(remainingPath(ownRoad.polyline, progress), z)
-			)
-	);
+	const remainingSeconds = $derived(evaluation?.seconds || 0);
+	const blocked = $derived(evaluation?.blocked || false);
 	const arrived = $derived(total > 0 && progress >= total);
 	const staleTraffic = $derived(
 		!conditions.trafficSimulation &&
@@ -152,33 +131,25 @@
 		active?.steps.find((s) => s.progressMeters > currentProgress + 5) || active?.steps.at(-1)
 	);
 	const status = $derived(
-		observed
-			? room?.telemetry?.status || 'idle'
-			: arrived
-				? 'arrived'
-				: blocked
-					? 'blocked'
-					: playing
-						? 'running'
-						: started
-							? 'paused'
-							: 'idle'
+		arrived ? 'arrived' : blocked ? 'blocked' : playing ? 'running' : started ? 'paused' : 'idle'
 	);
-	const travelStarted = $derived(observed ? status !== 'idle' : started);
-	const remainingMeters = $derived(
-		active ? Math.max(0, (cumulativeDistances(active.polyline).at(-1) || 0) - currentProgress) : 0
-	);
+	const travelStarted = $derived(started);
+	const remainingMeters = $derived(Math.max(0, total - progress));
 	const alternative = $derived(
 		candidates[0] ||
-			roads.find(
-				(r) => r.key !== ownRoad?.key && !floods.some((z) => intersectsFlood(r.polyline, z))
-			) ||
+			(progress === 0
+				? ranked.find(
+						(r) =>
+							r.road.key !== ownRoad?.key && !r.blocked && (blocked || r.seconds < remainingSeconds)
+					)?.road
+				: null) ||
 			null
 	);
-	const dataStatus = $derived({
-		traffic: conditions.trafficSimulation ? 'Traffic simulation' : routeError || (staleTraffic ? 'Traffic estimate stale' : trafficStatus || 'Loading live traffic…'),
-		rainfall: conditions.floodSimulation ? 'Flood simulation' : rainfallError || (staleRainfall ? 'Rainfall assessment stale' : assessment ? `Rainfall assessed ${new Date(assessment.assessedAt).toLocaleTimeString()}` : 'Loading rainfall assessment…')
-	});
+	const alternativeEvaluation = $derived(
+		alternative
+			? evaluateSimulation(alternative, conditions, vehicle.maxSafeWaterDepthCm, 0, vehicle.id)
+			: null
+	);
 
 	async function api(path: string, method = 'GET', payload?: unknown) {
 		const response = await fetch(path, {
@@ -188,56 +159,22 @@
 			signal: AbortSignal.timeout(20000)
 		});
 		const data = await response.json();
-		if (!response.ok) throw new Error(data.error || 'Request failed.');
+		if (!response.ok) {
+			if (response.status === 409 && data.latest) receive(data.latest);
+			throw new Error(data.error || 'Request failed.');
+		}
 		return data;
 	}
-	function restore(t: Telemetry | null) {
-		playing = false;
-		if (!t) return;
-		origin = t.origin;
-		destination = t.destination;
-		vehicleId = t.vehicleId as typeof vehicleId;
-		roads = t.route ? [t.route] : [];
-		selectedKey = t.route?.key || '';
-		progress = t.progress;
-		completedMeters = t.completedMeters;
-		started = t.status !== 'idle';
-		routingStart = t.route?.polyline[0] || null;
-		fixture = t.route?.source === 'fixture';
-		skipHydrated = !!t.route;
-	}
-	function receive(next: DemoRoom) {
-		if (room && next.sequence < room.sequence) return;
-		const wasOwner = room?.travelerId === travelerId,
-			reset = next.resetVersion !== lastReset,
-			applyPreset = lastReset >= 0 || !next.telemetry;
-		const previousConditions = room?.conditions;
-		room = next;
-		if (!controller && next.travelerId === travelerId && !wasOwner) restore(next.telemetry);
-		if (reset) {
-			lastReset = next.resetVersion;
-			if (next.preset && applyPreset) {
-				playing = false;
-				started = false;
-				origin = initialOrigin();
-				destination = initialDestination();
-				progress = 0;
-				completedMeters = 0;
-				routingStart = null;
-				fixture = true;
-				skipHydrated = false;
-				roads = DEMO_ROADS;
-				selectedKey = DEMO_ROADS[0].key;
-				candidates = [];
-			}
-		}
-		const identity = `${next.conditions.trafficSimulation}:${next.conditions.floodSimulation}`;
+	function receive(next: SimulationState) {
+		lastSnapshot = Date.now();
+		connected = true;
+		syncError = '';
+		if (shared && next.revision <= shared.revision) return;
+		const previous = shared?.conditions;
 		if (
-			sourceIdentity &&
-			identity !== sourceIdentity &&
-			!(reset && next.preset) &&
-			!controller &&
-			next.travelerId === travelerId
+			previous &&
+			(previous.trafficSimulation !== next.conditions.trafficSimulation ||
+				previous.floodSimulation !== next.conditions.floodSimulation)
 		) {
 			playing = false;
 			rebaseAtCurrentPosition();
@@ -245,14 +182,22 @@
 			routeRequest++;
 			notice = 'Data source changed. Review the remaining route, then resume.';
 		}
-		if (
-			previousConditions &&
-			JSON.stringify(previousConditions) !== JSON.stringify(next.conditions)
-		) {
-			candidates = [];
-			rerouteGeneration++;
+		shared = next;
+		candidates = [];
+		rerouting = false;
+		rerouteGeneration++;
+	}
+	async function syncConditions() {
+		if (syncing || disposed) return;
+		syncing = true;
+		try {
+			const next = await api('/api/simulation');
+			if (!disposed) receive(next);
+		} catch (e) {
+			if (!disposed) syncError = e instanceof Error ? e.message : 'Shared conditions unavailable.';
+		} finally {
+			syncing = false;
 		}
-		sourceIdentity = identity;
 	}
 	function rebaseAtCurrentPosition() {
 		const road = ownRoad,
@@ -278,138 +223,52 @@
 		completedMeters += moved;
 		progress = 0;
 	}
-	function connectEvents() {
-		if (!roomId) return;
-		eventSource?.close();
-		eventSource = new EventSource(`/api/demo/rooms/${roomId}/events`);
-		eventSource.onmessage = (e) => {
-			if (!navigator.onLine) return;
-			receive(JSON.parse(e.data));
-			connected = true;
-			lastSnapshot = Date.now();
-		};
-		eventSource.onerror = () => {
-			connected = false;
-			playing = false;
-		};
-	}
-	async function claim(takeover = false) {
-		try {
-			receive(await api(`/api/demo/rooms/${roomId}/claim`, 'POST', { travelerId, takeover }));
-		} catch (e) {
-			notice = e instanceof Error ? e.message : 'Unable to take control.';
-		}
-	}
-	async function createRoom() {
-		creating = true;
-		error = '';
-		try {
-			const created: DemoRoom = await api('/api/demo/rooms', 'POST');
-			await api(`/api/demo/rooms/${created.id}/claim`, 'POST', { travelerId });
-			await api(`/api/demo/rooms/${created.id}/telemetry`, 'POST', {
-				travelerId,
-				resetVersion: 0,
-				telemetry: snapshot()
-			});
-			await goto(`/demo/${created.id}`);
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Could not create room.';
-		} finally {
-			creating = false;
-		}
-	}
-	function snapshot(): Telemetry {
-		return {
-			origin,
-			destination,
-			position,
-			route: ownRoad,
-			progress,
-			completedMeters,
-			remainingSeconds,
-			status: status as Telemetry['status'],
-			vehicleId,
-			dataStatus
-		};
-	}
-	async function publishTelemetry() {
-		if (!roomId || controller || !owner || !connected || telemetryBusy || !room) return;
-		const telemetry = snapshot(),
-			serialized = JSON.stringify(telemetry);
-		if (serialized === lastTelemetry) return;
-		telemetryBusy = true;
-		try {
-			const next = await api(`/api/demo/rooms/${roomId}/telemetry`, 'POST', {
-				travelerId,
-				resetVersion: room.resetVersion,
-				telemetry
-			});
-			receive(next);
-			lastTelemetry = serialized;
-		} catch {
-			playing = false;
-			notice = 'Traveler synchronization interrupted. Waiting for the latest room state.';
-		} finally {
-			telemetryBusy = false;
-		}
-	}
 	onMount(() => {
-		// One identity per tab; duplicated tabs deliberately receive a new identity.
-		const tab = window as Window & { floodnavTravelerId?: string };
-		travelerId = tab.floodnavTravelerId ??= demoId();
 		mounted = true;
-		if (roomId) {
-			void api(`/api/demo/rooms/${roomId}`)
-				.then(async (next) => {
-					receive(next);
-					if (!controller && !next.travelerId) await claim();
-				})
-				.catch((e) => (error = e.message));
-			connectEvents();
-		} else connected = true;
+		void syncConditions();
 		const ticker = setInterval(() => {
 			clock = Date.now();
-			if (roomId && connected && lastSnapshot && clock - lastSnapshot > 25000) {
-				connected = false;
-				playing = false;
-				connectEvents();
-			}
+			if (!lastSnapshot || clock - lastSnapshot > 15000) connected = false;
+			if (!connected) playing = false;
 			if (playing && editable && !busy && !blocked && !liveUnavailable && !document.hidden)
 				progress = advanceTimed(timing, progress, 5);
 			if (arrived) playing = false;
 		}, 250);
-		const telemetryTimer = setInterval(() => {
-			void publishTelemetry();
-		}, 1000);
-		const refreshTimer = setInterval(() => {
-			if (document.hidden || controller || !owner) return;
+		const poll = setInterval(() => {
+			if (!document.hidden) void syncConditions();
+		}, 2000);
+		const refresh = setInterval(() => {
+			if (document.hidden) return;
 			if (!conditions.trafficSimulation && !playing) {
 				if (started && ownRoad && !arrived) rebaseAtCurrentPosition();
 				routeRequest++;
 			}
 			if (!conditions.floodSimulation) weatherRequest++;
 		}, 120000);
-		const hide = () => {
+		const focus = () => {
+			void syncConditions();
+		};
+		const visibility = () => {
 			if (document.hidden) playing = false;
+			else focus();
 		};
-		document.addEventListener('visibilitychange', hide);
 		const offline = () => {
-			if (roomId) {
-				connected = false;
-				playing = false;
-				eventSource?.close();
-			}
+			connected = false;
+			playing = false;
 		};
+		window.addEventListener('focus', focus);
+		window.addEventListener('online', focus);
 		window.addEventListener('offline', offline);
-		window.addEventListener('online', connectEvents);
+		document.addEventListener('visibilitychange', visibility);
 		return () => {
-			eventSource?.close();
+			disposed = true;
 			clearInterval(ticker);
-			clearInterval(telemetryTimer);
-			clearInterval(refreshTimer);
-			document.removeEventListener('visibilitychange', hide);
+			clearInterval(poll);
+			clearInterval(refresh);
+			window.removeEventListener('focus', focus);
+			window.removeEventListener('online', focus);
 			window.removeEventListener('offline', offline);
-			window.removeEventListener('online', connectEvents);
+			document.removeEventListener('visibilitychange', visibility);
 			speechService.cancel();
 		};
 	});
@@ -431,17 +290,12 @@
 		return data as RoadRoute[];
 	}
 	$effect(() => {
-		if (!mounted || controller || !owner || !roomReady) return;
+		if (!mounted || !sharedReady) return;
 		const start = routingStart || origin.coordinate,
 			end = destination.coordinate,
 			simulated = trafficSimulation,
 			useFixture = fixture;
 		void routeRequest;
-		if (skipHydrated) {
-			skipHydrated = false;
-			return;
-		}
-		// Hydrated telemetry already contains a route. Only endpoint/provider/request changes fetch again.
 		const generation = ++routeGeneration;
 		const abort = new AbortController();
 		let disposed = false;
@@ -466,7 +320,7 @@
 			.catch((e) => {
 				if (!disposed)
 					routeError = abort.signal.aborted
-						? 'Routing timed out. Retry or load a demo preset from the controller.'
+						? 'Routing timed out. Retry or load a demo preset from simulation controls.'
 						: e.message;
 			})
 			.finally(() => {
@@ -481,8 +335,9 @@
 	});
 	$effect(() => {
 		const simulated = floodSimulation;
-		if (!mounted || controller || !owner || simulated || !roads.length) {
+		if (!mounted || simulated || !roads.length) {
 			assessment = null;
+			rainfallError = '';
 			return;
 		}
 		const input = roads;
@@ -538,13 +393,14 @@
 		}
 	});
 	$effect(() => {
-		if (blocked && mounted && !muted && owner && !controller)
+		if (blocked && mounted && !muted)
 			untrack(() =>
 				speechService.speak('Simulated flood ahead. Travel paused. Check an alternative route.')
 			);
 	});
 	function changeWaypoint(which: 'origin' | 'destination', value: Waypoint) {
 		if (!editable) return;
+		rerouteGeneration++;
 		playing = false;
 		started = false;
 		progress = 0;
@@ -591,54 +447,83 @@
 	}
 	async function apply(conditions: Conditions, revision: number, preset?: DemoScenario) {
 		try {
-			receive(await api(`/api/demo/rooms/${roomId}`, 'PATCH', { conditions, revision, preset }));
+			receive(await api('/api/simulation', 'PATCH', { conditions, revision, preset }));
 			error = '';
 			return true;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not publish changes.';
 			try {
-				receive(await api(`/api/demo/rooms/${roomId}`));
+				receive(await api('/api/simulation'));
 			} catch {}
 			return false;
 		}
 	}
+	// Only condition, vehicle, and route changes trigger an automatic search, not every travel tick.
+	$effect(() => {
+		const revision = shared?.revision;
+		void vehicleId;
+		void roads;
+		void selectedKey;
+		if (revision === undefined || !mounted || !connected || busy) return;
+		untrack(() => {
+			candidates = [];
+			rerouteGeneration++;
+			rerouting = false;
+			if (ownRoad && !arrived && (blocked || (evaluation?.delaySeconds || 0) > 0))
+				void findAlternative();
+		});
+	});
 	async function findAlternative() {
 		if (!ownRoad || !editable) return;
 		rerouting = true;
 		notice = '';
+		// Keep candidate origins at the exact current position while the provider responds.
+		if (progress > 0 && playing) {
+			playing = false;
+			notice = 'Conditions changed. Travel paused while checking alternatives.';
+		}
 		const version = ++rerouteGeneration;
 		const current = positionAt(ownRoad.polyline, progress),
 			currentRoad = ownRoad;
+		const currentPath = remainingPath(currentRoad.polyline, progress);
+		const atStart = progress === 0;
 		const abort = new AbortController(),
 			timer = setTimeout(() => abort.abort(), 18000);
 		try {
-			let result: RoadRoute[];
-			if (fixture && progress === 0) result = DEMO_ROADS.filter((r) => r.key !== currentRoad.key);
-			else
-				result = await getRoutes(
-					current,
-					destination.coordinate,
-					conditions.trafficSimulation,
-					abort.signal
-				);
-			if (version !== rerouteGeneration) return;
-			candidates = result.filter(
-				(r) =>
-					!floods.some((z) => intersectsFlood(r.polyline, z)) &&
-					JSON.stringify(r.polyline) !==
-						JSON.stringify(remainingPath(currentRoad.polyline, progress))
-			);
+			const result =
+				atStart && roads.length > 1
+					? roads
+					: await getRoutes(
+							current,
+							destination.coordinate,
+							conditions.trafficSimulation,
+							abort.signal
+						);
+			if (version !== rerouteGeneration || disposed) return;
+			candidates = rankSimulationRoutes(result, conditions, vehicle.maxSafeWaterDepthCm, vehicle.id)
+				.filter(
+					(r) =>
+						!r.blocked &&
+						JSON.stringify(r.road.polyline) !== JSON.stringify(currentPath) &&
+						(!atStart || r.road.key !== currentRoad.key) &&
+						(blocked || r.seconds < remainingSeconds)
+				)
+				.map((r) => r.road);
 			if (!candidates.length)
-				notice =
-					'No flood-avoiding alternative available among returned routes. Travel stays paused.';
+				notice = blocked
+					? 'No passable alternative available among returned roads. Travel stays paused.'
+					: 'No faster alternative available among returned roads.';
 		} catch (e) {
-			notice = e instanceof Error ? e.message : 'Could not find an alternative.';
+			if (version === rerouteGeneration)
+				notice = e instanceof Error ? e.message : 'Could not find an alternative.';
 		} finally {
 			clearTimeout(timer);
-			rerouting = false;
+			if (version === rerouteGeneration) rerouting = false;
 		}
 	}
 	function acceptAlternative(road: RoadRoute) {
+		rerouteGeneration++;
+		rerouting = false;
 		playing = false;
 		completedMeters += progress;
 		progress = 0;
@@ -648,15 +533,16 @@
 		notice = 'Alternative selected. Resume when ready.';
 		lastSpeech = '';
 	}
-	async function copyController() {
-		try {
-			await navigator.clipboard.writeText(`${location.origin}/demo/${roomId}/controller`);
-			notice = 'Controller link copied. Open it on the other device.';
-		} catch {
-			notice = `Controller: ${location.origin}/demo/${roomId}/controller`;
-		}
+	function loadExampleTrip() {
+		stopTrip();
+		origin = initialOrigin();
+		destination = initialDestination();
+		fixture = trafficSimulation;
+		roads = DEMO_ROADS;
+		selectedKey = DEMO_ROADS[0].key;
 	}
 	function stopTrip() {
+		rerouteGeneration++;
 		playing = false;
 		started = false;
 		progress = 0;
@@ -665,13 +551,10 @@
 		routeRequest++;
 		lastSpeech = '';
 	}
-	function minutes(seconds: number) {
-		return Math.max(1, Math.ceil(seconds / 60));
-	}
 </script>
 
 <svelte:head
-	><title>{controller ? 'Scenario Controller' : 'Directions'} · FloodNav</title><meta
+	><title>Directions · FloodNav</title><meta
 		name="description"
 		content="An interactive Cebu flood-aware travel demo."
 	/></svelte:head
@@ -681,7 +564,7 @@
 		if (e.key === 'Escape') picking = null;
 	}}
 />
-<main class="demo-shell" class:controller-view={controller}>
+<main class="demo-shell" class:configuration-open={drawerOpen}>
 	<DemoMap
 		origin={displayedOrigin.coordinate}
 		destination={displayedDestination.coordinate}
@@ -691,10 +574,12 @@
 		zones={visibleZones}
 		picking={!!picking}
 		liveTraffic={!conditions.trafficSimulation}
-		{controller}
 		{assessment}
 		onpick={mapPick}
-		onzone={(id) => (selectedZone = id)}
+		onzone={(id) => {
+			selectedZone = id;
+			drawerOpen = true;
+		}}
 		ontrafficstatus={(value) => (trafficStatus = value)}
 	/>
 	<div class="map-source-badges">
@@ -707,245 +592,240 @@
 				? 'Simulated flooding'
 				: 'Live rainfall'}</span
 		>
+		{#if previewZones && (drawerOpen || picking === 'traffic' || picking === 'flood')}<span
+				>Unpublished preview · ETA uses applied conditions</span
+			>{/if}
 	</div>
-	{#if !controller}
-		<aside class="directions-panel" class:traveling={travelStarted}>
-			<header class="brand-header">
-				<a href="/" class="brand"
-					><span class="brand-mark"><Icon name="route" size={23} /></span>FloodNav<span
-						class="brand-city">CEBU</span
-					></a
-				><span class="demo-label">TRAVEL DEMO</span>
-			</header>
-			{#if !travelStarted}
-				<div class="planner-body">
-					<div class="planner-title">
-						<h1>Where to?</h1>
-						<p>A clearer route through changing conditions.</p>
-					</div>
-					<div class="waypoint-stack">
-						<div class="waypoint-rail">
-							<span class="origin-dot"></span><span class="rail-line"></span><Icon
-								name="pin"
-								size={20}
-							/>
-						</div>
-						<div class="waypoint-editors">
-							<LocationPicker
-								label="Starting point"
-								value={displayedOrigin}
-								disabled={!editable}
-								onchoose={(p) => changeWaypoint('origin', p)}
-								onpick={() => (picking = 'origin')}
-								ongps={locate}
-							/><LocationPicker
-								label="Destination"
-								value={displayedDestination}
-								disabled={!editable}
-								onchoose={(p) => changeWaypoint('destination', p)}
-								onpick={() => (picking = 'destination')}
-							/>
-						</div>
-						<button
-							class="swap-button icon-button"
-							aria-label="Swap start and destination"
-							disabled={!editable}
-							onclick={() => {
-								const a = origin,
-									b = destination;
-								changeWaypoint('origin', b);
-								changeWaypoint('destination', a);
-							}}><Icon name="route" size={19} /></button
-						>
-					</div>
-					<label class="vehicle-field"
-						><Icon name="car" size={19} /><select
-							aria-label="Vehicle"
-							bind:value={vehicleId}
-							disabled={!editable}
-							>{#each VEHICLE_CATEGORIES as v}<option value={v.id}>{v.title}</option>{/each}</select
-						><span>Demo profile</span></label
-					>
-				</div>
-				<div class="route-results" class:collapsed>
-					<div class="route-results-title">
-						<span>{busy ? 'Finding your route…' : 'Recommended routes'}</span><button
-							class="icon-button mobile-only"
-							aria-label="Toggle route details"
-							onclick={() => (collapsed = !collapsed)}><Icon name="chevron" size={17} /></button
-						>
-					</div>
-					<div class="route-results-content">
-						{#each observed ? (active ? [active] : []) : roads as road, i (road.key)}{@const roadBlocked =
-								floods.some(
-									(z) =>
-										z.depthCm > vehicle.maxSafeWaterDepthCm && intersectsFlood(road.polyline, z)
-								)}{@const seconds = timedSegments(
-								road,
-								conditions.trafficSimulation ? conditions.zones : []
-							).reduce((n, s) => n + s.seconds, 0)}<button
-								class="demo-route-card"
-								class:chosen={active?.key === road.key}
-								disabled={!editable}
-								onclick={() => {
-									selectedKey = road.key;
-									progress = 0;
-								}}
-								><span class="route-card-icon"><Icon name="car" /></span><span
-									class="route-card-main"
-									><strong
-										>{minutes(seconds)} min
-										<small>{(road.distanceMeters / 1000).toFixed(1)} km</small></strong
-									><span>{!floodSimulation && assessment?.recommendedKey === road.key ? 'Lower estimated rainfall exposure' : i === 0 ? 'Recommended route' : 'Alternative route'}</span><small
-										class:blocked-text={roadBlocked}
-										>{roadBlocked
-											? 'Blocked by simulated flood'
-											: !conditions.floodSimulation
-												? 'Flood conditions unconfirmed'
-												: 'No blocking simulated flood'}</small
-									></span
-								><span class="route-radio"></span></button
-							>{/each}
-					</div>
-					{#if !roads.length && !busy && !observed}<p class="quiet-text">
-							Choose your starting point and destination.
-						</p>{/if}
-					{#if !roomId}<button
-							class="primary-button start-button"
-							disabled={creating || !mounted}
-							onclick={createRoom}
-							>{creating ? 'Creating demo…' : 'Create demo'}<Icon name="arrow" size={18} /></button
-						>
-						<p class="demo-footnote">Invite a controller. Experience a changing journey.</p>
-					{:else}<button
-							class="primary-button start-button"
-							disabled={!editable || !ownRoad || busy || blocked || liveUnavailable}
-							onclick={() => {
-								started = true;
-								playing = true;
-							}}><Icon name="play" size={18} />Start demo</button
-						>
-						<p class="demo-footnote">Simulated travel · 20× playback</p>{/if}
-				</div>
-			{:else}
-				<div class="maneuver-card">
-					<span class="maneuver-arrow"><Icon name={arrived ? 'pin' : 'arrow'} size={34} /></span>
-					<div>
-						<small>{arrived ? 'JOURNEY COMPLETE' : 'NEXT DIRECTION'}</small>
-						<h1>
-							{arrived ? 'You have arrived' : nextStep?.instruction || 'Continue on your route'}
-						</h1>
-						<p>
-							{arrived
-								? destination.name
-								: `${Math.max(0, Math.round((nextStep?.progressMeters || 0) - currentProgress))} m ahead`}
-						</p>
-					</div>
-				</div>
-			{/if}
-			{#if roomId}<footer class="room-footer">
-					<span class="connection-dot" class:online={connected}></span><span
-						>{connected
-							? owner
-								? 'Traveler connected'
-								: 'Watching traveler'
-							: 'Reconnecting…'}</span
-					><button
-						class="icon-button"
-						title="Copy controller link"
-						aria-label="Copy controller link"
-						onclick={copyController}><Icon name="link" size={17} /></button
-					><a
-						href={`/demo/${roomId}/controller`}
-						target="_blank"
-						rel="noreferrer"
-						aria-label="Open controller"
-						title="Open controller"><Icon name="settings" size={18} /></a
-					>
-				</footer>{/if}
-		</aside>
-		{#if travelStarted}<section class="trip-card" aria-label="Trip progress">
-				<div>
-					<strong>{arrived ? 'Arrived' : `${minutes(remainingSeconds)} min`}</strong><span
-						>{(remainingMeters / 1000).toFixed(1)} km remaining
-						<span class="trip-separator">·</span>
-						{status}</span
-					><small
-						>{((completedMeters + progress) / 1000).toFixed(2)} km traveled · Simulated journey</small
-					>
-				</div>
-				<div class="trip-actions">
-					<button
-						class="icon-button"
-						aria-label={muted ? 'Unmute voice' : 'Mute voice'}
-						aria-pressed={muted}
-						onclick={() => {
-							muted = !muted;
-							speechService.setMuted(muted);
-						}}><Icon name="sound" /></button
-					><button
-						class="primary-button"
-						disabled={!editable || blocked || arrived || busy || liveUnavailable}
-						onclick={() => (playing = !playing)}
-						><Icon name={playing ? 'pause' : 'play'} size={17} />{playing
-							? 'Pause'
-							: 'Resume'}</button
-					><button class="icon-button" aria-label="End trip" disabled={!editable} onclick={stopTrip}
-						><Icon name="close" /></button
-					>
-				</div>
-			</section>{/if}
-	{:else}
-		<header class="controller-topbar">
-			<a class="brand" href={`/demo/${roomId}`}
-				><span class="brand-mark"><Icon name="route" size={23} /></span>FloodNav</a
-			><span class="controller-tag">Controller</span><button
-				class="icon-button"
-				aria-label="Toggle configuration"
-				onclick={() => (drawerOpen = !drawerOpen)}><Icon name="settings" /></button
-			>
+	<aside class="directions-panel" class:traveling={travelStarted}>
+		<header class="brand-header">
+			<a href="/" class="brand"
+				><span class="brand-mark"><Icon name="route" size={23} /></span>FloodNav<span
+					class="brand-city">CEBU</span
+				></a
+			><span class="demo-label">TRAVEL DEMO</span>
 		</header>
-		<section class="traveler-monitor">
-			<span class="eyebrow">TRAVELER VIEW</span>
-			<h2>
-				{room?.telemetry ? `${minutes(remainingSeconds)} min remaining` : 'Waiting for traveler'}
-			</h2>
-			<p>
-				{room?.telemetry
-					? `${displayedOrigin.name} → ${displayedDestination.name}`
-					: 'Open the traveler link to begin your demo.'}
-			</p>
+		{#if !travelStarted}
+			<div class="planner-body">
+				<div class="planner-title">
+					<h1>Where to?</h1>
+					<p>A clearer route through changing conditions.</p>
+				</div>
+				<div class="vehicle-options" role="group" aria-label="Vehicle">
+					{#each VEHICLE_CATEGORIES as v}
+						{@const profile = VEHICLE_TRAVEL_PROFILES[v.id]}
+						{@const estimate = ownRoad
+							? evaluateSimulation(ownRoad, conditions, v.maxSafeWaterDepthCm, progress, v.id)
+							: null}
+						<button
+							class="vehicle-option"
+							class:selected={vehicleId === v.id}
+							aria-pressed={vehicleId === v.id}
+							aria-label={profile.label}
+							title={v.title}
+							disabled={!editable}
+							onclick={() => (vehicleId = v.id)}
+						>
+							<span class="vehicle-option-icon"><Icon name={profile.icon} size={22} /></span>
+							<span class="vehicle-option-label">{profile.label}</span>
+							<span class="vehicle-option-eta"
+								>{busy
+									? '…'
+									: !estimate
+										? '—'
+										: estimate.blocked
+											? 'Blocked'
+											: `${Math.ceil(estimate.seconds / 60)} min`}</span
+							>
+						</button>
+					{/each}
+				</div>
+				<p class="vehicle-estimate-note">Demo vehicle estimates · same driving route</p>
+				<div class="waypoint-stack">
+					<div class="waypoint-rail">
+						<span class="origin-dot"></span><span class="rail-line"></span><Icon
+							name="pin"
+							size={20}
+						/>
+					</div>
+					<div class="waypoint-editors">
+						<LocationPicker
+							label="Starting point"
+							value={displayedOrigin}
+							disabled={!editable}
+							onchoose={(p) => changeWaypoint('origin', p)}
+							onpick={() => (picking = 'origin')}
+							ongps={locate}
+						/><LocationPicker
+							label="Destination"
+							value={displayedDestination}
+							disabled={!editable}
+							onchoose={(p) => changeWaypoint('destination', p)}
+							onpick={() => (picking = 'destination')}
+						/>
+					</div>
+					<button
+						class="swap-button icon-button"
+						aria-label="Swap start and destination"
+						disabled={!editable}
+						onclick={() => {
+							const a = origin,
+								b = destination;
+							changeWaypoint('origin', b);
+							changeWaypoint('destination', a);
+						}}><Icon name="route" size={19} /></button
+					>
+				</div>
+			</div>
+			<div class="route-results" class:collapsed>
+				<div class="route-results-title">
+					<span>{busy ? 'Finding your route…' : 'Recommended routes'}</span><button
+						class="icon-button mobile-only"
+						aria-label="Toggle route details"
+						onclick={() => (collapsed = !collapsed)}><Icon name="chevron" size={17} /></button
+					>
+				</div>
+				<div class="route-results-content">
+					{#each ranked as result, i (result.road.key)}{@const road =
+							result.road}{@const roadBlocked = result.blocked}{@const seconds =
+							result.seconds}<button
+							class="demo-route-card"
+							class:chosen={active?.key === road.key}
+							disabled={!editable}
+							onclick={() => {
+								selectedKey = road.key;
+								progress = 0;
+							}}
+							><span class="route-card-icon"><Icon name="car" /></span><span class="route-card-main"
+								><strong
+									>{roadBlocked ? 'Blocked — ETA unavailable' : formatTravelTime(seconds)}
+									<small>{(road.distanceMeters / 1000).toFixed(1)} km</small></strong
+								><span
+									>{!floodSimulation && assessment?.recommendedKey === road.key
+										? 'Lower estimated rainfall exposure'
+										: i === 0 && !roadBlocked
+											? 'Recommended route'
+											: 'Alternative route'}</span
+								><small class:blocked-text={roadBlocked}
+									>{roadBlocked
+										? 'Blocked by simulated flood'
+										: !conditions.floodSimulation
+											? 'Flood conditions unconfirmed'
+											: 'No blocking simulated flood'}</small
+								></span
+							><span class="route-radio"></span></button
+						>{/each}
+				</div>
+				{#if !roads.length && !busy}<p class="quiet-text">
+						Choose your starting point and destination.
+					</p>{/if}
+				<button
+					class="primary-button start-button"
+					disabled={!editable || !ownRoad || busy || blocked || liveUnavailable}
+					onclick={() => {
+						candidates = [];
+						rerouteGeneration++;
+						rerouting = false;
+						started = true;
+						playing = true;
+					}}><Icon name="play" size={18} />Start travel</button
+				>
+				<p class="demo-footnote">Simulated travel · 20× playback</p>
+			</div>
+		{:else}
+			<div class="maneuver-card">
+				<span class="maneuver-arrow"><Icon name={arrived ? 'pin' : 'arrow'} size={34} /></span>
+				<div>
+					<small>{arrived ? 'JOURNEY COMPLETE' : 'NEXT DIRECTION'}</small>
+					<h1>
+						{arrived ? 'You have arrived' : nextStep?.instruction || 'Continue on your route'}
+					</h1>
+					<p>
+						{arrived
+							? destination.name
+							: `${Math.max(0, Math.round((nextStep?.progressMeters || 0) - currentProgress))} m ahead`}
+					</p>
+				</div>
+			</div>
+		{/if}
+		<footer class="simulation-footer">
+			<span class="connection-dot" class:online={connected}></span>
+			<span>{connected ? 'Shared conditions connected' : 'Connecting…'}</span>
+			<button
+				class="text-button"
+				onclick={() => (drawerOpen = !drawerOpen)}
+				disabled={!mounted}
+				aria-expanded={drawerOpen}>Simulation controls</button
+			>
+		</footer>
+	</aside>
+	{#if travelStarted}<section class="trip-card" aria-label="Trip progress">
 			<div>
-				<span class="monitor-status">{status}</span><span
-					>{(remainingMeters / 1000).toFixed(1)} km remaining</span
+				<strong
+					>{arrived
+						? 'Arrived'
+						: blocked
+							? 'Blocked — ETA unavailable'
+							: formatTravelTime(remainingSeconds)}</strong
+				><span
+					>{(remainingMeters / 1000).toFixed(1)} km remaining
+					<span class="trip-separator">·</span>
+					{status}</span
+				><small
+					>{((completedMeters + progress) / 1000).toFixed(2)} km traveled · Simulated journey</small
 				>
 			</div>
-			<a href={`/demo/${roomId}`} target="_blank" rel="noreferrer">Open traveler ↗</a>
-		</section>
-		<aside class="controller-drawer" hidden={!drawerOpen} aria-label="Scenario configuration">
-			<div class="drawer-mobile-handle">
-				<button class="text-button" onclick={() => (drawerOpen = false)}
-					>Close configuration <Icon name="close" size={16} /></button
-				>
-			</div>
-			{#if room}<ConditionsEditor
-					{room}
-					{picked}
-					{selectedZone}
-					onpick={(kind) => {
-						picking = kind;
-						if (window.innerWidth < 760) drawerOpen = false;
+			<div class="trip-actions">
+				<button
+					class="icon-button"
+					aria-label={muted ? 'Unmute voice' : 'Mute voice'}
+					aria-pressed={muted}
+					onclick={() => {
+						muted = !muted;
+						speechService.setMuted(muted);
+					}}><Icon name="sound" /></button
+				><button
+					class="primary-button"
+					disabled={!editable || blocked || arrived || busy || liveUnavailable}
+					onclick={() => {
+						playing = !playing;
+						candidates = [];
+						rerouteGeneration++;
+						rerouting = false;
 					}}
-					oncancelpick={() => (picking = null)}
-					onapply={apply}
-					onpreview={(zones) => (previewZones = zones)}
-				/>{:else}<p>Connecting to demo room…</p>{/if}
-			<p class="controller-disclaimer">
-				Demo controls · No login required<br />Changes are shared with this room. Restarting the
-				server clears the demo.
-			</p>
-		</aside>
-	{/if}
+					><Icon name={playing ? 'pause' : 'play'} size={17} />{playing
+						? 'Pause'
+						: 'Resume'}</button
+				><button class="icon-button" aria-label="End trip" disabled={!editable} onclick={stopTrip}
+					><Icon name="close" /></button
+				>
+			</div>
+		</section>{/if}
+	<aside class="controller-drawer" hidden={!drawerOpen} aria-label="Scenario configuration">
+		<div class="configuration-close">
+			<button class="text-button" onclick={() => (drawerOpen = false)}
+				>Close configuration <Icon name="close" size={16} /></button
+			>
+		</div>
+		{#if shared}<ConditionsEditor
+				simulation={shared}
+				{picked}
+				{selectedZone}
+				onpick={(kind) => {
+					picking = kind;
+					if (window.innerWidth < 760) drawerOpen = false;
+				}}
+				oncancelpick={() => (picking = null)}
+				onapply={apply}
+				onpreview={(zones) => (previewZones = zones)}
+			/>{:else}<p>Loading shared conditions…</p>{/if}
+		<p class="controller-disclaimer">
+			No login required · Applied changes affect everyone.<br />Travel progress belongs to this
+			browser only.
+		</p>
+		<button class="text-button" disabled={!editable} onclick={loadExampleTrip}
+			>Load example trip: Fuente → SM City</button
+		>
+	</aside>
 	<div class="demo-alerts" aria-live="polite">
 		{#if picking}<div class="pick-banner">
 				<Icon name="pin" /><span
@@ -956,25 +836,35 @@
 							: `a ${picking} area`}</span
 				><button onclick={() => (picking = null)}>Cancel</button>
 			</div>{/if}
-		{#if roomId && !connected && room}<div class="info-banner">
-				Reconnecting to controller updates. Travel paused.
+		{#if !connected && shared}<div class="info-banner">
+				Shared conditions disconnected. Travel paused. <button onclick={() => void syncConditions()}
+					>Retry synchronization</button
+				>
 			</div>{/if}
-		{#if !controller && roomId && room && !owner}<div class="info-banner">
-				This traveler is read-only.<button onclick={() => claim(true)}>Take control</button>
+		{#if syncError}<div class="error-banner" role="alert">
+				{syncError}<button onclick={() => void syncConditions()}>Retry synchronization</button>
 			</div>{/if}
-		{#if blocked && !controller}<div class="warning-banner">
+		{#if blocked}<div class="warning-banner">
 				<Icon name="rain" />
 				<div>
 					<strong>Flood ahead. Travel paused.</strong>
 					<p>A simulated flood blocks the remaining route.</p>
 					<button disabled={rerouting || !editable} onclick={findAlternative}
 						>{rerouting ? 'Checking roads…' : 'Find alternative from here'}</button
-					>{#if candidates[0]}<button
-							disabled={!editable}
-							onclick={() => acceptAlternative(candidates[0])}
-							>Use flood-avoiding alternative</button
-						>{/if}
+					>
 				</div>
+			</div>{/if}
+		{#if alternative && alternativeEvaluation}<div class="info-banner alternative-banner">
+				<span
+					>{blocked ? 'Passable alternative' : 'Faster alternative'} · {formatTravelTime(
+						alternativeEvaluation.seconds
+					)}
+					{#if !blocked}
+						· Save {formatTravelTime(remainingSeconds - alternativeEvaluation.seconds)}{/if}</span
+				>
+				<button disabled={!editable || rerouting} onclick={() => acceptAlternative(alternative)}
+					>Use alternative</button
+				>
 			</div>{/if}
 		{#if error || routeError || rainfallError || staleTraffic || staleRainfall}<div
 				class="error-banner"
@@ -985,13 +875,11 @@
 					rainfallError ||
 					(staleRainfall
 						? 'Rainfall assessment is stale. Refresh before continuing.'
-						: 'Live traffic estimate is stale. Refresh before continuing.')}{#if !controller && !error}<button
+						: 'Live traffic estimate is stale. Refresh before continuing.')}{#if !error}<button
 						onclick={() => {
 							routeRequest++;
 							weatherRequest++;
 						}}>Retry</button
-					>{/if}{#if roomId}<a href={`/demo/${roomId}/controller`} target="_blank" rel="noreferrer"
-						>Open simulation controls</a
 					>{/if}
 			</div>{/if}
 		{#if notice}<div class="info-banner">

@@ -1,144 +1,415 @@
-import { test, expect, type Page } from '@playwright/test';
-import { readFileSync } from 'node:fs';
-const direct = JSON.parse(readFileSync(new URL('../../client/src/lib/data/demoRoutes.json', import.meta.url), 'utf8').replace(/^\uFEFF/, ''));
-const tile = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
-async function mock(page: Page) {
- await page.route('**/router.project-osrm.org/**', route => route.fulfill({ json: direct }));
- await page.route('**/mt1.google.com/**', route => route.fulfill({ contentType: 'image/png', body: tile }));
+import {
+  test,
+  expect,
+  type Page,
+  type APIRequestContext,
+} from "@playwright/test";
+import type {
+  Conditions,
+  SimulationZone,
+} from "../../client/src/lib/types/demo";
+
+const tile = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+  "base64",
+);
+const start = [123.8938, 10.3117],
+  end = [123.9184, 10.3121];
+function route(points: number[][], duration: number) {
+  return {
+    distance: 2800,
+    duration,
+    geometry: { coordinates: points },
+    legs: [
+      {
+        steps: [
+          {
+            distance: 2800,
+            duration,
+            name: "Test road",
+            maneuver: { type: "depart", location: points[0] },
+          },
+          {
+            distance: 0,
+            duration: 0,
+            name: "",
+            maneuver: { type: "arrive", location: points.at(-1) },
+          },
+        ],
+      },
+    ],
+  };
 }
-test('directions landing creates a room and controller edits synchronize without resetting travel', async ({ page, browser, request }) => {
- const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
- await mock(page); await page.goto('/');
- await expect(page.getByRole('heading', { name: 'Where to?' })).toBeVisible();
- await expect(page.locator('[data-map-layer]')).toHaveAttribute('data-map-layer', 'Streets');
- await page.getByRole('button', { name: 'Create demo', exact: true }).click();
- await expect(page).toHaveURL(/\/demo\/[a-z0-9-]+$/);
- await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
- const roomUrl = page.url(), id = roomUrl.split('/').at(-1)!;
- const controllerContext = await browser.newContext(); const controller = await controllerContext.newPage(); await mock(controller); controller.on('pageerror', e => errors.push(e.message));
- await controller.goto(`${roomUrl}/controller`);
- await expect(controller.getByRole('heading', { name: 'Change the journey.' })).toBeVisible();
- await controller.getByRole('button', { name: 'Add traffic area' }).click();
- await controller.locator('.demo-map').click({ position: { x: 580, y: 310 } });
- await expect(controller.getByLabel('Area name')).toBeVisible();
- await controller.getByLabel('Area name').fill('Cebu traffic test');
- await controller.getByLabel('Traffic level').selectOption('heavy');
- await controller.getByRole('button', { name: 'Apply changes' }).click();
-  await expect(controller.getByText('Published to traveler')).toBeVisible();
- await controller.screenshot({ path: 'test-results/controller-desktop.png' });
- let room = await (await request.get(`/api/demo/rooms/${id}`)).json();
- expect(room.conditions.zones[0].name).toBe('Cebu traffic test');
- await page.getByRole('button', { name: 'Start demo', exact: true }).click();
- await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
- await expect.poll(async () => (await (await request.get(`/api/demo/rooms/${id}`)).json()).telemetry?.progress || 0).toBeGreaterThan(0);
- room = await (await request.get(`/api/demo/rooms/${id}`)).json(); const previousProgress = room.telemetry.progress;
- await request.patch(`/api/demo/rooms/${id}`, { data: { revision: room.revision, conditions: { ...room.conditions, zones: [] } } });
- await expect.poll(async () => (await (await request.get(`/api/demo/rooms/${id}`)).json()).telemetry?.progress || 0).toBeGreaterThan(previousProgress);
- room = await (await request.get(`/api/demo/rooms/${id}`)).json();
- const end = room.telemetry.route.polyline.at(-1);
- await request.patch(`/api/demo/rooms/${id}`, { data: { revision: room.revision, conditions: { ...room.conditions, zones: [{ id: 'flood-test', kind: 'flood', name: 'Flood ahead', center: end, radiusMeters: 500, depthCm: 100, rainMmH: 40, enabled: true, level: 'moderate' }] } } });
- await expect(page.getByText('Flood ahead. Travel paused.', { exact: true })).toBeVisible();
- await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
- await expect(controller.locator('.monitor-status')).toHaveText('blocked');
- expect(errors).toEqual([]); await controllerContext.close();
-});
-test('LAN-compatible IDs and mobile controller retain unpublished areas while picking', async ({ page, request }) => {
- await page.addInitScript(() => { Object.defineProperty(crypto, 'randomUUID', { value: undefined }); });
- await mock(page); await page.goto('/'); await page.getByRole('button', { name: 'Create demo', exact: true }).click();
- await expect(page).toHaveURL(/\/demo\/[a-z0-9-]+$/); const roomUrl = page.url();
- await page.setViewportSize({ width: 390, height: 844 }); await page.goto(`${roomUrl}/controller`);
- await page.getByRole('button', { name: 'Add traffic area' }).click();
- await page.locator('.demo-map').click({ position: { x: 190, y: 390 } });
- await page.getByLabel('Area name').fill('First unpublished area');
- await page.getByRole('button', { name: 'Add flood area' }).click();
- await page.locator('.demo-map').click({ position: { x: 210, y: 440 } });
- await expect(page.getByRole('button', { name: /First unpublished area/ })).toBeVisible();
- await page.getByRole('button', { name: 'Apply changes' }).click();
- await expect(page.getByText('Published to traveler')).toBeVisible();
- const room = await (await request.get(`/api/demo/rooms/${roomUrl.split('/').at(-1)}`)).json();
- expect(room.conditions.zones).toHaveLength(2);
- await page.screenshot({ path: 'test-results/controller-mobile.png' });
-});
-test('all four source combinations keep simulation data out of rainfall logging', async ({ page, request }) => {
- const room = await (await request.post('/api/demo/rooms')).json(); let assessmentCalls = 0;
- await mock(page);
- const mockedRoad = { key: 'tomtom_0', source: 'tomtom', polyline: direct.routes[0].geometry.coordinates.map((p: number[]) => [p[1], p[0]]), distanceMeters: direct.routes[0].distance, durationSeconds: direct.routes[0].duration, fetchedAt: new Date().toISOString(), steps: [] };
- await page.route('**/api/demo/routes', route => route.fulfill({ json: [mockedRoad] }));
- await page.route('**/api/demo/traffic/**', route => route.fulfill({ contentType: 'image/png', body: tile }));
- await page.route('**/api/assessments', route => {
-  const data = route.request().postDataJSON(); expect(data.loggingEnabled).toBe(false); assessmentCalls++;
-  const stamp = new Date().toISOString();
-  return route.fulfill({ json: { assessedAt: stamp, assessmentId: data.assessmentId, modelVersion: 'test', loggingStatus: 'disabled', recommendedKey: null, routes: data.roads.map((r: any) => ({ key: r.key, score: 1 })), hazards: { features: [], verified: true }, weather: { errors: [], samples: [{ observedAt: stamp, fetchedAt: stamp, forecastFetchedAt: stamp, rainMmH: 0, forecast: [{ endsAt: new Date(Date.now() + 7200000).toISOString(), rainMm3h: 0, probability: 0 }] }] } } });
- });
- await page.goto(`/demo/${room.id}`); await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
- let revision = 0;
- for (const [trafficSimulation, floodSimulation] of [[true, false], [false, false], [false, true], [true, true]]) {
-  await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: revision++, conditions: { trafficSimulation, floodSimulation, zones: [] } } });
-  await expect(page.locator('.map-source-badges')).toContainText(trafficSimulation ? 'Simulated traffic' : 'Live traffic');
-  await expect(page.locator('.map-source-badges')).toContainText(floodSimulation ? 'Simulated flooding' : 'Live rainfall');
-  await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
- }
- expect(assessmentCalls).toBeGreaterThanOrEqual(2);
-});
-test('lost connection pauses traveler and reconnect restores the current environment', async ({ page, context, request }) => {
- const room = await (await request.post('/api/demo/rooms')).json(); await mock(page); await page.goto(`/demo/${room.id}`);
- await page.getByRole('button', { name: 'Start demo', exact: true }).click();
- await expect.poll(async () => (await (await request.get(`/api/demo/rooms/${room.id}`)).json()).telemetry?.progress || 0).toBeGreaterThan(0);
- await context.setOffline(true);
- await expect(page.getByText('Reconnecting to controller updates. Travel paused.')).toBeVisible({ timeout: 30000 });
- const latest = await (await request.get(`/api/demo/rooms/${room.id}`)).json();
- await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: latest.revision, conditions: { ...latest.conditions, zones: [{ id: 'offline-flood', kind: 'flood', name: 'Offline flood', center: latest.telemetry.route.polyline.at(-1), radiusMeters: 300, depthCm: 100, rainMmH: 20, level: 'moderate', enabled: true }] } } });
- await context.setOffline(false);
- await expect(page.getByText('Flood ahead. Travel paused.', { exact: true })).toBeVisible({ timeout: 15000 });
- await expect(page.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
-});
-test('second traveler is read-only until takeover; preset reset and conflict protection', async ({ page, browser, request }) => {
- const room = await (await request.post('/api/demo/rooms')).json();
- await mock(page); await page.goto(`/demo/${room.id}`);
- await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
- const context = await browser.newContext(), second = await context.newPage(); await mock(second); await second.goto(`/demo/${room.id}`);
- await expect(second.getByRole('button', { name: 'Take control', exact: true })).toBeVisible();
- await expect(second.getByRole('button', { name: 'Start demo', exact: true })).toBeDisabled();
- await second.getByRole('button', { name: 'Take control', exact: true }).click();
- await expect(second.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
- await expect(page.getByRole('button', { name: 'Take control', exact: true })).toBeVisible();
- await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: 0, conditions: room.conditions, preset: 'blocked' } });
- await expect(second.getByText('Flood ahead. Travel paused.', { exact: true })).toBeVisible();
- const stale = await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: 0, conditions: room.conditions } }); expect(stale.status()).toBe(409);
- await context.close();
-});
-test('location presets, online search, map picking, swapping, and mobile layout', async ({ page }) => {
- await mock(page); await page.route('**/api/places?**', route => route.fulfill({ json: [{ id: 'test', name: 'Test Cebu address', coordinate: [10.31, 123.90] }] }));
- await page.goto('/');
- await page.getByRole('textbox', { name: 'Starting point', exact: true }).click();
- await page.getByRole('button', { name: /Cebu IT Park/ }).click();
- await expect(page.getByRole('textbox', { name: 'Starting point', exact: true })).toHaveValue('Cebu IT Park, Lahug');
- await page.getByRole('textbox', { name: 'Destination', exact: true }).fill('Test Cebu');
- await page.getByRole('textbox', { name: 'Destination', exact: true }).press('Enter');
- await page.getByRole('button', { name: 'Test Cebu address', exact: true }).click();
- await page.getByRole('button', { name: 'Swap start and destination' }).click();
- await expect(page.getByRole('textbox', { name: 'Starting point', exact: true })).toHaveValue('Test Cebu address');
- await page.getByRole('textbox', { name: 'Destination', exact: true }).click();
- await page.getByRole('button', { name: 'Choose on map', exact: true }).click();
- await page.keyboard.press('Escape'); await expect(page.locator('.pick-banner')).toHaveCount(0);
- await page.getByRole('textbox', { name: 'Destination', exact: true }).click(); await page.getByRole('button', { name: 'Choose on map', exact: true }).click();
- await page.locator('.demo-map').click({ position: { x: 700, y: 400 } });
- await expect(page.getByRole('textbox', { name: 'Destination', exact: true })).toHaveValue(/^10\.\d+, 123\.\d+$/);
- await page.screenshot({ path: 'test-results/traveler-desktop.png' });
- await page.setViewportSize({ width: 390, height: 844 });
- await expect(page.getByRole('button', { name: 'Create demo', exact: true })).toBeVisible();
- expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
- await page.screenshot({ path: 'test-results/traveler-mobile.png' });
-});
-test('controller switches sources explicitly; failed provider never silently simulates', async ({ page, request }) => {
- const room = await (await request.post('/api/demo/rooms')).json();
- await mock(page); await page.route('**/api/demo/routes', route => route.fulfill({ status: 503, json: { error: 'Live traffic not configured. Enable traffic simulation.' } }));
- await page.goto(`/demo/${room.id}`); await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
- await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: 0, conditions: { ...room.conditions, trafficSimulation: false } } });
- await expect(page.getByRole('alert')).toContainText('Live traffic not configured');
- await expect(page.locator('.map-source-badges')).toContainText('Live traffic');
- await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeDisabled();
- await request.patch(`/api/demo/rooms/${room.id}`, { data: { revision: 1, conditions: room.conditions } });
- await expect(page.getByRole('button', { name: 'Start demo', exact: true })).toBeEnabled();
+const zone: SimulationZone = {
+  id: "traffic",
+  name: "Shared traffic",
+  kind: "traffic",
+  center: [10.3119, 123.9061],
+  radiusMeters: 700,
+  enabled: true,
+  level: "heavy",
+  depthCm: 10,
+  rainMmH: 10,
+};
+const empty: Conditions = {
+  trafficSimulation: true,
+  floodSimulation: true,
+  zones: [],
+};
+async function publish(request: APIRequestContext, conditions: Conditions) {
+  const state = await (await request.get("/api/simulation")).json();
+  const result = await request.patch("/api/simulation", {
+    data: { revision: state.revision, conditions },
+  });
+  expect(result.ok()).toBeTruthy();
+  return result.json();
+}
+async function mock(page: Page) {
+  await page.route("**/router.project-osrm.org/**", async (request) => {
+    // Return geometries beginning at the requested position, including mid-trip reroutes.
+    const coordinates = request
+      .request()
+      .url()
+      .split("/driving/")[1]
+      .split("?")[0]
+      .split(";");
+    const from = coordinates[0].split(",").map(Number),
+      to = coordinates[1].split(",").map(Number);
+    await request.fulfill({
+      json: {
+        code: "Ok",
+        routes: [
+          route([from, to], 100),
+          route([from, [from[0], 10.325], [to[0], 10.325], to], 120),
+        ],
+      },
+    });
+  });
+  await page.route("**/mt1.google.com/**", (r) =>
+    r.fulfill({ contentType: "image/png", body: tile }),
+  );
+}
+const chosenEta = (page: Page) =>
+  page.locator(".demo-route-card.chosen strong");
+async function openControls(page: Page) {
+  await page
+    .getByRole("button", { name: "Simulation controls", exact: true })
+    .click();
+}
+test.beforeEach(async ({ page, request }) => {
+  await publish(request, empty);
+  await mock(page);
 });
 
+test("anyone can travel independently and edit shared conditions without rooms", async ({
+  page,
+  browser,
+  request,
+}) => {
+  const errors: string[] = [],
+    roomRequests: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("request", (r) => {
+    if (r.url().includes("/rooms")) roomRequests.push(r.url());
+  });
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Start travel", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Create demo" })).toHaveCount(
+    0,
+  );
+  const context = await browser.newContext(),
+    second = await context.newPage();
+  await mock(second);
+  second.on("pageerror", (e) => errors.push(e.message));
+  await second.goto("/");
+  await expect(chosenEta(page)).toContainText("1 min 40 s");
+  await expect(chosenEta(second)).toContainText("1 min 40 s");
+  await publish(request, { ...empty, zones: [{ ...zone, enabled: false }] });
+  await openControls(second);
+  await second.getByRole("button", { name: /^Shared traffic/ }).click();
+  await second.getByLabel("Area enabled").check();
+  await second
+    .getByRole("button", { name: "Apply changes", exact: true })
+    .click();
+  await expect(
+    second.getByText("Published to everyone", { exact: true }),
+  ).toBeVisible();
+  await expect(chosenEta(page)).not.toContainText("1 min 40 s");
+  await expect(chosenEta(second)).not.toContainText("1 min 40 s");
+  await expect(page.locator(".alternative-banner")).toContainText(
+    "Faster alternative",
+  );
+  await expect(page.locator(".demo-route-card").first()).toContainText(
+    "2 min 0 s",
+  );
+  await second.screenshot({ path: "test-results/shared-controls-desktop.png" });
+  await second.getByRole("button", { name: "Close configuration" }).click();
+  await page.getByRole("button", { name: "Start travel", exact: true }).click();
+  await expect(page.locator(".trip-card small")).not.toContainText("0.00 km");
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  const traveled = await page.locator(".trip-card small").textContent();
+  await expect(
+    second.getByRole("button", { name: "Start travel", exact: true }),
+  ).toBeEnabled();
+  await second
+    .getByRole("button", { name: "Start travel", exact: true })
+    .click();
+  await expect(
+    second.getByRole("button", { name: "Pause", exact: true }),
+  ).toBeVisible();
+  await publish(request, empty);
+  await expect(page.locator(".trip-card small")).toHaveText(traveled!);
+  expect(roomRequests).toEqual([]);
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test("shallow floods change ETA, deep floods block, and alternatives can be selected", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await expect(chosenEta(page)).toContainText("1 min 40 s");
+  await publish(request, {
+    ...empty,
+    zones: [{ ...zone, kind: "flood", depthCm: 5 }],
+  });
+  await expect(chosenEta(page)).not.toContainText("1 min 40 s");
+  await expect(
+    page.getByRole("button", { name: "Start travel", exact: true }),
+  ).toBeEnabled();
+  await publish(request, {
+    ...empty,
+    zones: [{ ...zone, kind: "flood", depthCm: 30 }],
+  });
+  await expect(chosenEta(page)).toContainText("Blocked — ETA unavailable");
+  await expect(
+    page.getByRole("button", { name: "Start travel", exact: true }),
+  ).toBeDisabled();
+  await expect(page.locator(".alternative-banner")).toContainText(
+    "Passable alternative",
+  );
+  await page
+    .getByRole("button", { name: "Use alternative", exact: true })
+    .click();
+  await expect(chosenEta(page)).toContainText("2 min 0 s");
+  await expect(
+    page.getByRole("button", { name: "Start travel", exact: true }),
+  ).toBeEnabled();
+  await publish(request, {
+    ...empty,
+    zones: [
+      {
+        ...zone,
+        kind: "flood",
+        depthCm: 100,
+        center: [end[1], end[0]],
+        radiusMeters: 1000,
+      },
+    ],
+  });
+  await expect(
+    page.getByText("Flood ahead. Travel paused.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "No passable alternative available among returned roads. Travel stays paused.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Use alternative", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("edits ahead mid-trip preserve position and update remaining ETA; reconnect loads latest", async ({
+  page,
+  context,
+  request,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start travel", exact: true }).click();
+  await expect(page.locator(".trip-card small")).not.toContainText("0.00 km");
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  const distance = await page.locator(".trip-card small").textContent();
+  const eta = await page.locator(".trip-card strong").textContent();
+  await publish(request, { ...empty, zones: [zone] });
+  await expect(page.locator(".trip-card strong")).not.toHaveText(eta!);
+  await expect(page.locator(".trip-card small")).toHaveText(distance!);
+  await expect(page.locator(".alternative-banner")).toContainText(
+    "Faster alternative",
+  );
+  await context.setOffline(true);
+  await expect(
+    page.getByText("Shared conditions disconnected. Travel paused.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await publish(request, {
+    ...empty,
+    zones: [{ ...zone, kind: "flood", depthCm: 100 }],
+  });
+  await context.setOffline(false);
+  await expect(
+    page.getByText("Flood ahead. Travel paused.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Resume", exact: true }),
+  ).toBeDisabled();
+  await expect(page.locator(".trip-card small")).toHaveText(distance!);
+});
+
+test("mobile map editing retains drafts and conflicts require review without losing edits", async ({
+  page,
+  request,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await openControls(page);
+  await page
+    .getByRole("button", { name: "Add traffic area", exact: true })
+    .click();
+  await page.locator(".demo-map").click({ position: { x: 190, y: 370 } });
+  await page.getByLabel("Area name").fill("My unpublished traffic");
+  await page
+    .getByRole("button", { name: "Add flood area", exact: true })
+    .click();
+  await page.locator(".demo-map").click({ position: { x: 210, y: 400 } });
+  await expect(
+    page.getByRole("button", { name: /^My unpublished traffic/ }),
+  ).toBeVisible();
+  await publish(request, { ...empty, zones: [zone] });
+  await expect(
+    page.getByText("Shared conditions changed", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /^My unpublished traffic/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Apply changes", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Keep my draft after review" })
+    .click();
+  await page
+    .getByRole("button", { name: "Apply changes", exact: true })
+    .click();
+  await expect(
+    page.getByText("Published to everyone", { exact: true }),
+  ).toBeVisible();
+  const state = await (await request.get("/api/simulation")).json();
+  expect(state.conditions.zones).toHaveLength(2);
+  expect(state.conditions.zones[0].name).toBe("My unpublished traffic");
+  await page.screenshot({ path: "test-results/shared-controls-mobile.png" });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("legacy links redirect, shared state survives reload, and API rejects stale or invalid changes", async ({
+  page,
+  request,
+}) => {
+  const state = await publish(request, { ...empty, zones: [zone] });
+  await page.goto("/demo/old-room/controller");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(chosenEta(page)).not.toContainText("1 min 40 s");
+  await page.reload();
+  await expect(chosenEta(page)).not.toContainText("1 min 40 s");
+  await page.goto("/demo/old-room");
+  await expect(page).toHaveURL(/\/$/);
+  const conflict = await request.patch("/api/simulation", {
+    data: { revision: state.revision - 1, conditions: empty },
+  });
+  expect(conflict.status()).toBe(409);
+  expect((await conflict.json()).latest.conditions.zones).toHaveLength(1);
+  expect(
+    (
+      await request.patch("/api/simulation", {
+        data: {
+          revision: state.revision,
+          conditions: { ...empty, zones: [{ ...zone, radiusMeters: -1 }] },
+        },
+      })
+    ).status(),
+  ).toBe(400);
+});
+
+test("all live/simulated source combinations keep synthetic data out of research logging", async ({
+  page,
+  request,
+}) => {
+  let calls = 0;
+  await page.route("**/api/demo/routes", (r) =>
+    r.fulfill({
+      json: [
+        {
+          key: "live",
+          source: "tomtom",
+          polyline: [start, end].map((p) => [p[1], p[0]]),
+          distanceMeters: 2800,
+          durationSeconds: 100,
+          fetchedAt: new Date().toISOString(),
+          steps: [],
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/demo/traffic/**", (r) =>
+    r.fulfill({ contentType: "image/png", body: tile }),
+  );
+  await page.route("**/api/assessments", (r) => {
+    const data = r.request().postDataJSON();
+    expect(data.loggingEnabled).toBe(false);
+    calls++;
+    const now = new Date().toISOString();
+    return r.fulfill({
+      json: {
+        assessedAt: now,
+        recommendedKey: null,
+        routes: data.roads.map((road: any) => ({ key: road.key, score: 1 })),
+        hazards: { features: [], verified: true },
+        weather: {
+          errors: [],
+          samples: [
+            {
+              observedAt: now,
+              fetchedAt: now,
+              forecastFetchedAt: now,
+              rainMmH: 0,
+              forecast: [
+                {
+                  endsAt: new Date(Date.now() + 7200000).toISOString(),
+                  rainMm3h: 0,
+                  probability: 0,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+  });
+  await page.goto("/");
+  for (const [trafficSimulation, floodSimulation] of [
+    [true, false],
+    [false, false],
+    [false, true],
+    [true, true],
+  ]) {
+    await publish(request, { ...empty, trafficSimulation, floodSimulation });
+    await expect(page.locator(".map-source-badges")).toContainText(
+      trafficSimulation ? "Simulated traffic" : "Live traffic",
+    );
+    await expect(page.locator(".map-source-badges")).toContainText(
+      floodSimulation ? "Simulated flooding" : "Live rainfall",
+    );
+    await expect(
+      page.getByRole("button", { name: "Start travel", exact: true }),
+    ).toBeEnabled();
+  }
+  expect(calls).toBeGreaterThanOrEqual(2);
+});

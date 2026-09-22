@@ -1,13 +1,13 @@
-import tailwindcss from '@tailwindcss/vite';
-import vercel from '@sveltejs/adapter-vercel';
 import node from '@sveltejs/adapter-node';
+import vercel from '@sveltejs/adapter-vercel';
 import { sveltekit } from '@sveltejs/kit/vite';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
 	envDir: '..',
 	css: { postcss: { plugins: [] } },
-	server: { port: 3000, strictPort: true },
+	server: { port: 5173, strictPort: true },
 	plugins: [
 		tailwindcss(),
 		sveltekit({

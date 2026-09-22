@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import { coordinate, DemoError } from '$lib/server/demoRooms';
+import { coordinate, DemoError } from '$lib/server/simulationValidation';
 import { body, respond } from '$lib/server/demoHttp';
 import { parseTomTomRoutes } from '$lib/services/tomtomRoutes';
 import type { RequestHandler } from './$types';

@@ -1,6 +1,14 @@
 <script lang="ts">
 	let { name = 'pin', size = 20 }: { name?: string; size?: number } = $props();
 	const paths: Record<string, string> = {
+		suv: 'M3 17V8l3-4h11l4 5v8H3 M4 10h16 M9 5v5m6-5v5 M6 17v3m12-3v3 M6 14h2m8 0h2',
+		truck:
+			'M2 5h12v12H2V5Z M14 9h5l3 4v4h-8 M8 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0 M20 18a2 2 0 1 1-4 0 2 2 0 0 1 4 0',
+		motorcycle:
+			'M8 17a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M22 17a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M5 17l4-7h6l-4 7H5 M15 6h3l1 11 M8 9H5 M15 10l4 7',
+		bicycle:
+			'M8 17a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M22 17a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M5 17l4-8 5 8H5l10-8 M7 6h4 M9 6v3 M14 5h3l2 12',
+
 		pin: 'M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z M15 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
 		route: 'M5 20V5m0 0L1 9m4-4 4 4 M19 4v15m0 0-4-4m4 4 4-4',
 		arrow: 'M12 21V3m0 0-7 7m7-7 7 7',

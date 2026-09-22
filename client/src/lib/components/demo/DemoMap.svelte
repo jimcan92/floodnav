@@ -16,7 +16,6 @@
 		zones = [],
 		picking = false,
 		liveTraffic = false,
-		controller = false,
 		assessment = null,
 		onpick,
 		onzone,
@@ -30,7 +29,6 @@
 		zones?: SimulationZone[];
 		picking?: boolean;
 		liveTraffic?: boolean;
-		controller?: boolean;
 		assessment?: ExposureAssessment | null;
 		onpick: (p: Coordinate) => void;
 		onzone?: (id: string) => void;
@@ -53,8 +51,8 @@
 		const path = route?.polyline || [origin, destination];
 		const narrow = window.innerWidth < 760;
 		map.fitBounds(L.latLngBounds(path), {
-			paddingTopLeft: narrow ? [30, 260] : [controller ? 60 : 410, 90],
-			paddingBottomRight: narrow ? [30, 160] : [controller ? 420 : 70, 100],
+			paddingTopLeft: narrow ? [30, 260] : [410, 90],
+			paddingBottomRight: narrow ? [30, 160] : [70, 100],
 			maxZoom: 16
 		});
 	}

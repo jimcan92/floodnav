@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import { DemoError } from '$lib/server/demoRooms';
+import { DemoError } from '$lib/server/simulationValidation';
 import { respond } from '$lib/server/demoHttp';
 import type { RequestHandler } from './$types';
 const cache = new Map<string, { expires: number; data: unknown }>();

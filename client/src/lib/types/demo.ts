@@ -1,5 +1,4 @@
-import type { Coordinate, DemoScenario, TrafficLevel } from './navigation';
-import type { RoadRoute } from '../services/routingService';
+import type { Coordinate, TrafficLevel } from './navigation';
 
 export interface Waypoint {
 	name: string;
@@ -21,26 +20,8 @@ export interface Conditions {
 	floodSimulation: boolean;
 	zones: SimulationZone[];
 }
-export interface Telemetry {
-	origin: Waypoint;
-	destination: Waypoint;
-	position: Coordinate;
-	route: RoadRoute | null;
-	progress: number;
-	completedMeters: number;
-	remainingSeconds: number;
-	status: 'idle' | 'running' | 'paused' | 'blocked' | 'arrived';
-	vehicleId: string;
-	dataStatus?: { traffic: string; rainfall: string };
-}
-export interface DemoRoom {
-	id: string;
+export interface SimulationState {
 	revision: number;
-	sequence: number;
-	resetVersion: number;
-	preset: DemoScenario | null;
 	conditions: Conditions;
-	travelerId: string | null;
-	telemetry: Telemetry | null;
 	updatedAt: string;
 }

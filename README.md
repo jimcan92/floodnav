@@ -1,6 +1,6 @@
 # FloodNav
 
-The default screen is now a directions-focused **Traveler demo**, with a separate **Controller** link for changing traffic and floods during travel. Rooms use a single Node server's memory and SSE; no login or Supabase is required. See [interactive demo instructions](docs/DEMO.md). The previous rainfall/research interface is preserved at `/research`.
+The default screen offers **room-free travel** and **shared simulation controls**. Anyone can travel independently and edit traffic/flood conditions for everyone. Conditions persist in Supabase; no login or room links are needed. Apply the new shared-simulation migration and configure server credentials before use. See [setup and simulation behavior](docs/DEMO.md). The research interface remains at `/research`.
 
 Active app: **SvelteKit in `client/`**, with Leaflet + Google Hybrid/Satellite/Streets, OSRM road routes, OpenWeather rainfall + MGB susceptibility, optional Supabase research logging, and demo scenarios.
 

@@ -1,38 +1,53 @@
-# Interactive traveler/controller demo
+# Shared travel simulation
 
-Run `npm --prefix client run dev -- --host 0.0.0.0` and open port 3000 on the same trusted network. Use the host computer's LAN address, rather than localhost, when sharing with another device. Allow the development server through the local firewall if prompted. No cloud deployment is needed.
+Open `/`, select a start, destination and vehicle, then **Start travel**. No room or login is needed. Every browser has its own journey. **Simulation controls** is available before and during travel; anyone can change the traffic/flood conditions shared by all users.
 
-1. Open `/`, choose the start/destination and vehicle, then **Create demo**.
-2. Copy the controller link from the traveler panel. Open it in another browser/device for the person changing conditions.
-3. The traveler clicks **Start demo**. The controller adds traffic or flood areas by clicking the map, changes their values, then clicks **Apply changes**.
-4. Traffic affects ETA and speed only inside the configured circles. A flood exceeding the vehicle's demo threshold pauses travel when it intersects the remaining route. **Find alternative from here** requests road routes from the current simulated position; the traveler must confirm the alternative.
+## Persistent setup
 
-Travel is simulated at 20× speed; this is not GPS driving guidance. Flood thresholds are demonstration values, not safety advice. A live rainfall assessment estimates exposure and does not measure flood depth.
+Shared conditions require the existing Supabase project. Configure server-only `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_URL` (or use `PUBLIC_SUPABASE_URL` as the URL fallback). Never expose the service-role key to the browser.
 
-## Sources and presets
+Apply `supabase/migrations/202609230001_shared_simulation.sql` to the intended project **after reviewing and approving that database migration**. It creates one independent table and an atomic update function, with no changes to research or sensor records. Apply it before deploying this app version. Existing in-memory rooms cannot be migrated; old traveler/controller links redirect to `/`.
 
-New rooms start with both simulation switches ON and no zones. OFF means live, not disabled. Switches are independent. Zone values are retained when their source is switched to live. Source changes pause travel and rebuild the remaining route from the current location.
+The initial shared conditions have traffic/flood simulation ON and no zones. Changes persist across refreshes, server restarts, and application instances. There is no server-memory fallback. Missing configuration/storage produces an explicit error and retry action.
 
-Traffic simulation uses OSRM base road timing with segment multipliers of 1, 1.5 and 2.5 for light, moderate and heavy traffic. Overlapping circles use the greatest multiplier. Rainfall intensity and flood depth are independent inputs. Flood depth controls simulated passability.
+For local use: `pnpm dev -- --host 0.0.0.0` (use the port reported by Vite). For production Node: `pnpm build`, then `node --env-file=.env client/build`, configuring HOST/PORT as appropriate. The existing Vercel adapter also uses the shared database.
 
-The controller's **Ready-made demo scenarios** load the bundled Fuente → SM City route pair and reset the trip. Dry, bypass and all-blocked presets need no routing API for initial playback. Finding a new route from a position reached mid-trip still needs online routing. Map tiles need internet.
+## Editing and synchronization
 
-Live traffic requires server-only `TOMTOM_API_KEY`. Live mode uses TomTom flow tiles and traffic-aware route geometry/ETA together. Overlay refresh is once per minute while visible; route refresh is every two minutes when not moving. Five-minute-old traffic estimates are marked stale. Missing credentials, quotas or failed requests are shown explicitly and never replaced by simulated values automatically. Live Cebu coverage must be verified with your own key; tests use mocked responses.
+1. Open **Simulation controls**, add a traffic/flood area, and click the map to place it.
+2. Edit the radius, traffic level or flood depth. Draft circles are labeled **Unpublished preview** and do not affect ETA.
+3. Click **Apply changes**. Your browser updates immediately; other visible browsers poll every two seconds and on focus/reconnect.
+4. Simultaneous edits are revision-checked in the database. Conflicts preserve your draft and show the latest conditions. Review before publishing over them, or discard your draft to load the latest state.
 
-Live rainfall retains the existing OpenWeather/MGB integration. See `RAINFALL_RESEARCH.md` for configuration. Demo requests always disable research logging and do not require Supabase. The previous research interface remains available at `/research` with its existing behavior.
+A failed sync retains the last received conditions with a visible error. After 15 seconds without successful synchronization, travel pauses. Reconnection loads the latest conditions and never auto-resumes. Each tab's trip is independent and restarts on page refresh; no journey telemetry is shared.
 
-## Rooms and synchronization
+Shared presets replace conditions near Fuente → SM City without resetting anyone's journey. **Load example trip: Fuente → SM City** loads the bundled road pair for your browser when traffic simulation is enabled. Loading an example only resets your trip. Mid-trip alternative discovery still needs online road routing. Map tiles require internet.
 
-This prototype requires **one persistent Node process**. Production local run: `npm run build`, then `node --env-file=.env client/build` (set `HOST=0.0.0.0` and `PORT=3000` as needed). Do not use independent serverless instances or multiple workers for rooms.
+## ETA, flooding and alternatives
 
-Rooms live only in server memory, with a maximum of 200 rooms per process. Restarting clears them. Controller and traveler are views, not authenticated roles. Anyone with the room link can edit conditions or explicitly take traveler control. Use this on a trusted demo network.
+Travel runs at 20× playback speed; displayed ETA is simulated journey time, shown in minutes and seconds. Cards, remaining ETA, playback, and route ranking use the same evaluation.
 
-Only the active traveler writes telemetry, at most once per second. A second traveler view is read-only until **Take control** is selected. A page reload may require takeover because identity belongs to the browser tab runtime. Conditions have a revision to reject stale edits; preset resets have a separate epoch to reject telemetry from an old trip. SSE sends full snapshots on connect and at least every ten seconds; disconnect/stale synchronization pauses playback. Reconnection never auto-resumes.
+Only the portions of the remaining road inside enabled circles incur delay:
 
-## Address search
+- Traffic multipliers: light 1.2×, moderate 1.5×, heavy 2.5×.
+- Passable flood multiplier: `1 + depth / vehicle threshold`, capped at 2×; zero depth has no delay.
+- Overlaps of the same kind use their greatest multiplier. Traffic and flood multipliers multiply when both affect a segment.
+- Depth above the selected vehicle's demo threshold blocks the route: **Blocked — ETA unavailable**. Hazards already passed do not block or delay the remaining journey.
 
-Local Cebu presets filter as you type. Online address lookup only runs when Search/Enter is pressed. Results are Philippine addresses, biased toward Cebu. Public Nominatim use follows https://operations.osmfoundation.org/policies/nominatim/ : no online autocomplete, at most one upstream request per second across this single process, identifying User-Agent, attribution and cached results. Set `NOMINATIM_URL` to switch providers and `NOMINATIM_USER_AGENT` to identify your application with a suitable contact. Do not submit confidential addresses. Multiple server instances would require shared throttling.
+These are synthetic demonstration assumptions, not measured speeds or verified wading ratings. Rainfall intensity remains a separate scenario value. Live rainfall assessment estimates exposure, not flood depth.
 
-## Checks
+Condition/vehicle changes recompute and rank routes. An affected selected route triggers a search for a passable or faster alternative; the user chooses **Use alternative**. Mid-trip searches pause movement while checking routes from the exact current position. Accepting an alternative retains distance already traveled and waits for Resume. No qualifying route returned by the provider means no alternative is promised or fabricated.
 
-`npm run check`, `npm test`, `npm run build`, `npm run test:e2e`. Browser tests exercise the new demo and the retained research page. Live TomTom/OpenWeather/MGB services and actual LAN-device connectivity require configured credentials and a reachable server.
+## Live sources
+
+Switches are independent and global. OFF selects live data; it does not erase custom zones. Source changes pause travel and rebuild the remaining route from the current position.
+
+Traffic simulation uses OSRM base routes. Live traffic requires server-only `TOMTOM_API_KEY`, using TomTom traffic-aware geometry/timing and flow tiles. Live route refresh remains every two minutes when paused, with five-minute stale detection. Missing keys/provider failures are explicit and never silently replaced by simulations.
+
+Live rainfall retains OpenWeather/MGB setup in `RAINFALL_RESEARCH.md`. This travel screen always disables research logging. `/research` retains its existing behavior.
+
+Address search remains explicit-submit Nominatim lookup with per-process caching/throttling. Although shared conditions support multiple app instances, deployments using public Nominatim still need shared throttling or a suitable provider when using multiple workers.
+
+## Verification
+
+`pnpm check`, `pnpm test`, `pnpm build`, and `PLAYWRIGHT_CHANNEL=chromium pnpm test:e2e` (or the existing Edge default). Browser tests use an isolated PGlite database running the actual new migration behind a test PostgREST adapter. They never use the live Supabase database. Road/weather/map responses are mocked; live provider coverage and deployed Supabase connectivity need separate configured smoke tests.

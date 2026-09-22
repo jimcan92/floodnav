@@ -2,10 +2,10 @@
 	import { untrack } from 'svelte';
 	import Icon from './Icon.svelte';
 	import { demoId } from '$lib/services/demoId';
-	import type { Conditions, DemoRoom, SimulationZone } from '$lib/types/demo';
+	import type { Conditions, SimulationState, SimulationZone } from '$lib/types/demo';
 	import type { Coordinate, DemoScenario } from '$lib/types/navigation';
 	let {
-		room,
+		simulation,
 		picked,
 		selectedZone,
 		onpick,
@@ -13,17 +13,17 @@
 		oncancelpick,
 		onpreview
 	}: {
-		room: DemoRoom;
+		simulation: SimulationState;
 		picked: { kind: 'traffic' | 'flood'; center: Coordinate; token: number } | null;
 		selectedZone: string | null;
 		onpick: (kind: 'traffic' | 'flood') => void;
 		oncancelpick: () => void;
-		onpreview: (zones: SimulationZone[]) => void;
+		onpreview: (zones: SimulationZone[] | null) => void;
 		onapply: (conditions: Conditions, revision: number, preset?: DemoScenario) => Promise<boolean>;
 	} = $props();
 	const clone = (value: Conditions): Conditions => JSON.parse(JSON.stringify(value));
-	let draft = $state<Conditions>(untrack(() => clone(room.conditions))),
-		version = $state(untrack(() => room.revision)),
+	let draft = $state<Conditions>(untrack(() => clone(simulation.conditions))),
+		version = $state(untrack(() => simulation.revision)),
 		dirty = $state(false),
 		saving = $state(false),
 		message = $state('');
@@ -33,18 +33,20 @@
 	const zone = $derived(draft.zones.find((z) => z.id === editing));
 	$effect(() => {
 		onpreview(
-			clone(draft).zones.filter(
-				(z) =>
-					Number.isFinite(z.radiusMeters) &&
-					z.radiusMeters >= 10 &&
-					(z.kind === 'traffic' ? draft.trafficSimulation : draft.floodSimulation)
-			)
+			dirty
+				? clone(draft).zones.filter(
+						(z) =>
+							Number.isFinite(z.radiusMeters) &&
+							z.radiusMeters >= 10 &&
+							(z.kind === 'traffic' ? draft.trafficSimulation : draft.floodSimulation)
+					)
+				: null
 		);
 	});
 	$effect(() => {
-		if (room.revision !== version && !dirty) {
-			draft = clone(room.conditions);
-			version = room.revision;
+		if (simulation.revision !== version && !dirty) {
+			draft = clone(simulation.conditions);
+			version = simulation.revision;
 		}
 	});
 	$effect(() => {
@@ -88,15 +90,16 @@
 		saving = false;
 		if (ok) {
 			dirty = false;
-			draft = clone(room.conditions);
-			version = room.revision;
-			message = preset ? 'Preset loaded. Traveler trip reset.' : 'Published to traveler';
-		} else if (room.revision !== version) {
-			draft = clone(room.conditions);
-			version = room.revision;
-			dirty = false;
-			editing = null;
-			message = 'Newer settings loaded. Review and apply again.';
+			draft = clone(simulation.conditions);
+			version = simulation.revision;
+			message = preset
+				? 'Preset published to everyone. Trips are unchanged.'
+				: 'Published to everyone';
+		} else {
+			message =
+				simulation.revision !== version
+					? 'Someone changed the shared conditions. Your draft is preserved; review the latest settings below.'
+					: 'Changes were not saved. Retry when the connection is available.';
 		}
 	}
 </script>
@@ -104,8 +107,32 @@
 <div class="controller-heading">
 	<div class="eyebrow">SCENARIO CONTROL</div>
 	<h1>Change the journey.</h1>
-	<p>Set a situation. Watch the traveler respond.</p>
+	<p>Applied traffic and flood changes affect everyone’s routes.</p>
 </div>
+{#if dirty && simulation.revision !== version}
+	<div class="conflict-review" role="status">
+		<strong>Shared conditions changed</strong>
+		<p>
+			Latest: traffic simulation {simulation.conditions.trafficSimulation ? 'on' : 'off'}, flood
+			simulation {simulation.conditions.floodSimulation ? 'on' : 'off'}.
+		</p>
+		<ul>
+			{#each simulation.conditions.zones as z}<li>
+					{z.name}: {z.kind === 'flood' ? `${z.depthCm} cm` : z.level}, {z.radiusMeters} m{z.enabled
+						? ''
+						: ' (disabled)'}
+				</li>{/each}
+		</ul>
+		<button
+			type="button"
+			class="text-button"
+			onclick={() => {
+				version = simulation.revision;
+				message = 'Latest settings reviewed. Apply changes to publish your draft.';
+			}}>Keep my draft after review</button
+		>
+	</div>
+{/if}
 <form
 	class="conditions-form"
 	onsubmit={(e) => {
@@ -275,7 +302,10 @@
 						/></label
 					>
 				</div>
-				<small>Depth controls passability. Rainfall is a separate scenario value.</small>{/if}
+				<small
+					>Depth slows travel and blocks vehicles above their demo threshold. Rainfall is a separate
+					scenario value.</small
+				>{/if}
 			<label class="inline-check"
 				><input
 					type="checkbox"
@@ -285,17 +315,22 @@
 			>
 		</section>{/if}
 	<div class="publish-bar">
-		<button class="primary-button" disabled={saving || !dirty} type="submit"
+		<button
+			class="primary-button"
+			disabled={saving || !dirty || simulation.revision !== version}
+			type="submit"
 			>{saving ? 'Publishing…' : 'Apply changes'}<Icon name="arrow" size={17} /></button
 		><small role="status"
 			>{message ||
-				(dirty ? 'Unpublished changes' : `Traveler is receiving revision ${room.revision}`)}</small
+				(dirty
+					? 'Unpublished changes'
+					: `Shared conditions · revision ${simulation.revision}`)}</small
 		>{#if dirty}<button
 				type="button"
 				class="text-button"
 				onclick={() => {
-					draft = clone(room.conditions);
-					version = room.revision;
+					draft = clone(simulation.conditions);
+					version = simulation.revision;
 					dirty = false;
 					editing = null;
 					oncancelpick();
@@ -305,10 +340,10 @@
 </form>
 <details class="preset-section">
 	<summary>Ready-made demo scenarios</summary>
-	<p>Loading a preset resets the traveler’s trip to Fuente → SM City.</p>
+	<p>Presets change shared conditions near Fuente → SM City. Trips are not reset.</p>
 	<div class="preset-buttons">
 		{#each [['dry', 'Dry roads'], ['bypass', 'Flood + bypass'], ['blocked', 'All blocked']] as [id, title]}<button
-				disabled={saving}
+				disabled={saving || simulation.revision !== version}
 				onclick={() => void apply(id as DemoScenario)}>{title}</button
 			>{/each}
 	</div>

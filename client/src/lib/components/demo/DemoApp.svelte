@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { matchGpsToRoute, usableGpsFix } from '$lib/services/gpsNavigation';
+	import { haversineDistanceKm } from '$lib/services/trafficService';
 	import { VEHICLE_TRAVEL_PROFILES } from '$lib/services/demoSimulation';
 	import { onMount, untrack } from 'svelte';
 	import Icon from './Icon.svelte';
@@ -46,6 +48,17 @@
 		selectedKey = $state(''),
 		progress = $state(0),
 		completedMeters = $state(0);
+	let playbackSpeed = $state(1);
+	let requestedMode = $state<'gps' | 'demo' | ''>('');
+	let gpsPosition = $state<Coordinate | null>(null),
+		gpsAccuracy = $state(0),
+		gpsMessage = $state(''),
+		gpsArrived = $state(false),
+		gpsTimestamp = $state(0),
+		offRoute = $state(false);
+	let gpsInitialized = false,
+		lastGpsReroute = 0;
+
 	let playing = $state(false),
 		started = $state(false),
 		busy = $state(false),
@@ -77,10 +90,14 @@
 		disposed = false;
 	let syncError = $state('');
 	const conditions = $derived(
-		shared?.conditions || { trafficSimulation: true, floodSimulation: true, zones: [] }
+		shared?.conditions || { trafficSimulation: false, floodSimulation: false, zones: [] }
 	);
 	const trafficSimulation = $derived(conditions.trafficSimulation);
 	const floodSimulation = $derived(conditions.floodSimulation);
+	const travelMode = $derived(
+		requestedMode || (trafficSimulation || floodSimulation ? 'demo' : 'gps')
+	);
+	const gpsTravel = $derived(travelMode === 'gps');
 	const editable = $derived(mounted && connected);
 	const sharedReady = $derived(!!shared);
 	const vehicle = $derived(
@@ -91,7 +108,13 @@
 	const currentProgress = $derived(progress);
 	const displayedOrigin = $derived(origin);
 	const displayedDestination = $derived(destination);
-	const position = $derived(ownRoad ? positionAt(ownRoad.polyline, progress) : origin.coordinate);
+	const position = $derived(
+		started && gpsTravel && gpsPosition
+			? gpsPosition
+			: ownRoad
+				? positionAt(ownRoad.polyline, progress)
+				: origin.coordinate
+	);
 	const visibleZones = $derived(
 		(drawerOpen || picking === 'traffic' || picking === 'flood') && previewZones
 			? previewZones
@@ -109,7 +132,7 @@
 	const total = $derived(ownRoad ? cumulativeDistances(ownRoad.polyline).at(-1) || 0 : 0);
 	const remainingSeconds = $derived(evaluation?.seconds || 0);
 	const blocked = $derived(evaluation?.blocked || false);
-	const arrived = $derived(total > 0 && progress >= total);
+	const arrived = $derived(started && gpsTravel ? gpsArrived : total > 0 && progress >= total);
 	const staleTraffic = $derived(
 		!conditions.trafficSimulation &&
 			!!ownRoad?.fetchedAt &&
@@ -131,7 +154,19 @@
 		active?.steps.find((s) => s.progressMeters > currentProgress + 5) || active?.steps.at(-1)
 	);
 	const status = $derived(
-		arrived ? 'arrived' : blocked ? 'blocked' : playing ? 'running' : started ? 'paused' : 'idle'
+		arrived
+			? 'arrived'
+			: started && gpsTravel
+				? playing
+					? gpsMessage || (busy ? 'updating route' : 'GPS tracking')
+					: 'paused'
+				: blocked
+					? 'blocked'
+					: playing
+						? 'running'
+						: started
+							? 'paused'
+							: 'idle'
 	);
 	const travelStarted = $derived(started);
 	const remainingMeters = $derived(Math.max(0, total - progress));
@@ -176,11 +211,13 @@
 			(previous.trafficSimulation !== next.conditions.trafficSimulation ||
 				previous.floodSimulation !== next.conditions.floodSimulation)
 		) {
-			playing = false;
+			if (!gpsTravel) playing = false;
 			rebaseAtCurrentPosition();
 			fixture = false;
 			routeRequest++;
-			notice = 'Data source changed. Review the remaining route, then resume.';
+			notice = gpsTravel
+				? 'Shared data source changed. GPS tracking continues.'
+				: 'Data source changed. Review the remaining route, then resume.';
 		}
 		shared = next;
 		candidates = [];
@@ -202,7 +239,12 @@
 	function rebaseAtCurrentPosition() {
 		const road = ownRoad,
 			moved = progress;
-		routingStart = road ? positionAt(road.polyline, moved) : origin.coordinate;
+		routingStart =
+			gpsTravel && gpsPosition
+				? gpsPosition
+				: road
+					? positionAt(road.polyline, moved)
+					: origin.coordinate;
 		if (road && moved > 0) {
 			const length = cumulativeDistances(road.polyline).at(-1) || 1;
 			const path = remainingPath(road.polyline, moved);
@@ -229,9 +271,19 @@
 		const ticker = setInterval(() => {
 			clock = Date.now();
 			if (!lastSnapshot || clock - lastSnapshot > 15000) connected = false;
-			if (!connected) playing = false;
-			if (playing && editable && !busy && !blocked && !liveUnavailable && !document.hidden)
-				progress = advanceTimed(timing, progress, 5);
+			if (!connected && !gpsTravel) playing = false;
+			if (
+				!gpsTravel &&
+				playing &&
+				editable &&
+				!busy &&
+				!blocked &&
+				!liveUnavailable &&
+				!document.hidden
+			)
+				progress = advanceTimed(timing, progress, 0.25 * playbackSpeed);
+			if (started && gpsTravel && playing && gpsTimestamp && clock - gpsTimestamp > 15000)
+				gpsMessage = 'GPS signal stale — waiting for location';
 			if (arrived) playing = false;
 		}, 250);
 		const poll = setInterval(() => {
@@ -239,7 +291,7 @@
 		}, 2000);
 		const refresh = setInterval(() => {
 			if (document.hidden) return;
-			if (!conditions.trafficSimulation && !playing) {
+			if (!conditions.trafficSimulation && (!playing || gpsTravel)) {
 				if (started && ownRoad && !arrived) rebaseAtCurrentPosition();
 				routeRequest++;
 			}
@@ -249,12 +301,12 @@
 			void syncConditions();
 		};
 		const visibility = () => {
-			if (document.hidden) playing = false;
+			if (document.hidden && !gpsTravel) playing = false;
 			else focus();
 		};
 		const offline = () => {
 			connected = false;
-			playing = false;
+			if (!gpsTravel) playing = false;
 		};
 		window.addEventListener('focus', focus);
 		window.addEventListener('online', focus);
@@ -279,15 +331,21 @@
 		signal: AbortSignal
 	) {
 		if (simulated) return fetchRoadRoutes(start, end, signal);
-		const response = await fetch('/api/demo/routes', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ origin: start, destination: end }),
-			signal
-		});
-		const data = await response.json();
-		if (!response.ok) throw new Error(data.error);
-		return data as RoadRoute[];
+		try {
+			const response = await fetch('/api/demo/routes', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ origin: start, destination: end }),
+				signal
+			});
+			const data = await response.json();
+			if (!response.ok) throw new Error(data.error);
+			return data as RoadRoute[];
+		} catch (error) {
+			if (signal.aborted) throw error;
+			// Basic road routing remains available without live traffic. The UI labels the fallback.
+			return fetchRoadRoutes(start, end, signal);
+		}
 	}
 	$effect(() => {
 		if (!mounted || !sharedReady) return;
@@ -325,7 +383,10 @@
 			})
 			.finally(() => {
 				clearTimeout(timer);
-				if (!disposed) busy = false;
+				if (!disposed) {
+					busy = false;
+					if (!routeError && started && gpsTravel && gpsPosition) updateGpsProgress();
+				}
 			});
 		return () => {
 			disposed = true;
@@ -368,7 +429,7 @@
 						data.routes.some((r: { score: number | null }) => r.score === null)
 					)
 						rainfallError =
-							'Live rainfall assessment incomplete. Retry or enable flood simulation.';
+							'Live rainfall assessment incomplete. GPS navigation remains available; flood conditions are unconfirmed.';
 				}
 			})
 			.catch((e) => {
@@ -382,10 +443,17 @@
 		};
 	});
 	$effect(() => {
-		if (blocked || !editable || liveUnavailable) playing = false;
+		if (!gpsTravel && (blocked || !editable || liveUnavailable)) playing = false;
 	});
 	$effect(() => {
-		if (!playing || muted || !nextStep) return;
+		if (
+			!playing ||
+			muted ||
+			!nextStep ||
+			busy ||
+			(gpsTravel && (gpsMessage || offRoute || !gpsTimestamp))
+		)
+			return;
 		const key = `${active?.key}:${nextStep.id}`;
 		if (lastSpeech !== key) {
 			lastSpeech = key;
@@ -393,11 +461,111 @@
 		}
 	});
 	$effect(() => {
-		if (blocked && mounted && !muted)
+		if (blocked && mounted && !muted && !gpsTravel)
 			untrack(() =>
 				speechService.speak('Simulated flood ahead. Travel paused. Check an alternative route.')
 			);
 	});
+	function startTrip() {
+		requestedMode = travelMode;
+		if (gpsTravel && (!window.isSecureContext || !navigator.geolocation)) {
+			notice = 'Live GPS needs HTTPS (or localhost) and a browser with location support.';
+			return;
+		}
+		gpsInitialized = false;
+		gpsTimestamp = 0;
+		gpsArrived = false;
+		gpsPosition = null;
+		offRoute = false;
+		gpsMessage = gpsTravel ? 'Finding your location…' : '';
+		candidates = [];
+		rerouteGeneration++;
+		rerouting = false;
+		started = true;
+		playing = true;
+	}
+	function routeFromGps(point: Coordinate) {
+		completedMeters += progress;
+		progress = 0;
+		routingStart = point;
+		fixture = false;
+		candidates = [];
+		rerouteGeneration++;
+		routeRequest++;
+		lastGpsReroute = Date.now();
+	}
+	function receiveGps(fix: GeolocationPosition) {
+		if (!usableGpsFix(fix)) {
+			gpsMessage = 'GPS accuracy is low — waiting for a reliable location';
+			return;
+		}
+		if (fix.timestamp < gpsTimestamp) return;
+		gpsPosition = [fix.coords.latitude, fix.coords.longitude];
+		gpsAccuracy = fix.coords.accuracy;
+		gpsTimestamp = fix.timestamp;
+		gpsMessage = '';
+		if (!gpsInitialized) {
+			gpsInitialized = true;
+			origin = { name: 'Your location', coordinate: gpsPosition };
+			routeFromGps(gpsPosition);
+			lastGpsReroute = 0;
+			return;
+		}
+		updateGpsProgress();
+	}
+	function updateGpsProgress() {
+		if (
+			!ownRoad ||
+			busy ||
+			!gpsPosition ||
+			!playing ||
+			!gpsTimestamp ||
+			Date.now() - gpsTimestamp > 15000
+		)
+			return;
+		const match = matchGpsToRoute(ownRoad.polyline, gpsPosition, progress);
+		offRoute = match.distance > Math.max(50, gpsAccuracy * 1.5);
+		if (offRoute) {
+			gpsMessage = 'Off route — updating directions';
+			if (Date.now() - lastGpsReroute >= 10000) routeFromGps(gpsPosition);
+			return;
+		}
+		gpsMessage = '';
+		progress = match.progress;
+		const endpoint = ownRoad.polyline.at(-1)!;
+		if (
+			gpsAccuracy <= 30 &&
+			total - progress <= 30 &&
+			haversineDistanceKm(gpsPosition, endpoint) * 1000 <= 30
+		) {
+			gpsArrived = true;
+			progress = total;
+			playing = false;
+		}
+	}
+	$effect(() => {
+		if (!mounted || !started || !playing || !gpsTravel) return;
+		let active = true;
+		const watch = navigator.geolocation.watchPosition(
+			(fix) => {
+				if (active) receiveGps(fix);
+			},
+			(error) => {
+				if (!active) return;
+				gpsMessage =
+					error.code === 1
+						? 'Location permission denied. Allow location, then Resume.'
+						: 'GPS unavailable — waiting for location';
+				if (error.code === 1) playing = false;
+			},
+			{ enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+		);
+		return () => {
+			active = false;
+			navigator.geolocation.clearWatch(watch);
+		};
+	});
+
 	function changeWaypoint(which: 'origin' | 'destination', value: Waypoint) {
 		if (!editable) return;
 		rerouteGeneration++;
@@ -439,7 +607,7 @@
 					name: 'Your location',
 					coordinate: [p.coords.latitude, p.coords.longitude]
 				});
-				notice = 'Origin updated. Travel remains simulated.';
+				notice = 'Origin updated. Choose live GPS travel or demo playback.';
 			},
 			() => (notice = 'Location denied or unavailable. Choose a preset or map point.'),
 			{ timeout: 8000 }
@@ -469,7 +637,7 @@
 			candidates = [];
 			rerouteGeneration++;
 			rerouting = false;
-			if (ownRoad && !arrived && (blocked || (evaluation?.delaySeconds || 0) > 0))
+			if (!gpsTravel && ownRoad && !arrived && (blocked || (evaluation?.delaySeconds || 0) > 0))
 				void findAlternative();
 		});
 	});
@@ -478,7 +646,7 @@
 		rerouting = true;
 		notice = '';
 		// Keep candidate origins at the exact current position while the provider responds.
-		if (progress > 0 && playing) {
+		if (progress > 0 && playing && !gpsTravel) {
 			playing = false;
 			notice = 'Conditions changed. Travel paused while checking alternatives.';
 		}
@@ -542,6 +710,12 @@
 		selectedKey = DEMO_ROADS[0].key;
 	}
 	function stopTrip() {
+		gpsPosition = null;
+		gpsInitialized = false;
+		gpsTimestamp = 0;
+		gpsMessage = '';
+		gpsArrived = false;
+		offRoute = false;
 		rerouteGeneration++;
 		playing = false;
 		started = false;
@@ -556,7 +730,7 @@
 <svelte:head
 	><title>Directions · FloodNav</title><meta
 		name="description"
-		content="An interactive Cebu flood-aware travel demo."
+		content="Cebu directions with live GPS tracking and shared demo conditions."
 	/></svelte:head
 >
 <svelte:window
@@ -569,6 +743,7 @@
 		origin={displayedOrigin.coordinate}
 		destination={displayedDestination.coordinate}
 		{position}
+		followPosition={started && gpsTravel && playing && !!gpsPosition}
 		route={active}
 		{alternative}
 		zones={visibleZones}
@@ -602,7 +777,7 @@
 				><span class="brand-mark"><Icon name="route" size={23} /></span>FloodNav<span
 					class="brand-city">CEBU</span
 				></a
-			><span class="demo-label">TRAVEL DEMO</span>
+			><span class="demo-label">{gpsTravel ? 'LIVE GPS' : 'TRAVEL DEMO'}</span>
 		</header>
 		{#if !travelStarted}
 			<div class="planner-body">
@@ -639,7 +814,7 @@
 						</button>
 					{/each}
 				</div>
-				<p class="vehicle-estimate-note">Demo vehicle estimates · same driving route</p>
+				<p class="vehicle-estimate-note">Estimated vehicle timing · same driving route</p>
 				<div class="waypoint-stack">
 					<div class="waypoint-rail">
 						<span class="origin-dot"></span><span class="rail-line"></span><Icon
@@ -718,26 +893,48 @@
 				{#if !roads.length && !busy}<p class="quiet-text">
 						Choose your starting point and destination.
 					</p>{/if}
+				<label class="travel-mode"
+					>Travel mode
+					<select
+						aria-label="Travel mode"
+						value={travelMode}
+						onchange={(event) => (requestedMode = event.currentTarget.value as 'gps' | 'demo')}
+					>
+						<option value="gps">Live GPS · actual travel</option>
+						<option value="demo">Demo playback</option>
+					</select></label
+				>
 				<button
 					class="primary-button start-button"
-					disabled={!editable || !ownRoad || busy || blocked || liveUnavailable}
-					onclick={() => {
-						candidates = [];
-						rerouteGeneration++;
-						rerouting = false;
-						started = true;
-						playing = true;
-					}}><Icon name="play" size={18} />Start travel</button
+					disabled={!mounted ||
+						!ownRoad ||
+						busy ||
+						(!gpsTravel && (!editable || blocked || liveUnavailable))}
+					onclick={startTrip}><Icon name="play" size={18} />Start travel</button
 				>
-				<p class="demo-footnote">Simulated travel · 20× playback</p>
+				<p class="demo-footnote">
+					{gpsTravel
+						? 'Uses your device location · keep this page open'
+						: `Simulated travel · ${playbackSpeed}× playback`}
+				</p>
 			</div>
 		{:else}
 			<div class="maneuver-card">
 				<span class="maneuver-arrow"><Icon name={arrived ? 'pin' : 'arrow'} size={34} /></span>
 				<div>
-					<small>{arrived ? 'JOURNEY COMPLETE' : 'NEXT DIRECTION'}</small>
+					<small
+						>{arrived
+							? 'JOURNEY COMPLETE'
+							: gpsTravel && (offRoute || busy || gpsMessage)
+								? 'GPS STATUS'
+								: 'NEXT DIRECTION'}</small
+					>
 					<h1>
-						{arrived ? 'You have arrived' : nextStep?.instruction || 'Continue on your route'}
+						{arrived
+							? 'You have arrived'
+							: gpsTravel && (gpsMessage || busy)
+								? gpsMessage || 'Updating directions…'
+								: nextStep?.instruction || 'Continue on your route'}
 					</h1>
 					<p>
 						{arrived
@@ -763,15 +960,19 @@
 				<strong
 					>{arrived
 						? 'Arrived'
-						: blocked
-							? 'Blocked — ETA unavailable'
-							: formatTravelTime(remainingSeconds)}</strong
+						: gpsTravel && (offRoute || busy || !!gpsMessage || !gpsTimestamp)
+							? 'Updating ETA…'
+							: blocked
+								? 'Blocked — ETA unavailable'
+								: formatTravelTime(remainingSeconds)}</strong
 				><span
 					>{(remainingMeters / 1000).toFixed(1)} km remaining
 					<span class="trip-separator">·</span>
 					{status}</span
 				><small
-					>{((completedMeters + progress) / 1000).toFixed(2)} km traveled · Simulated journey</small
+					>{((completedMeters + progress) / 1000).toFixed(2)} km traveled · {gpsTravel
+						? `Live GPS · ±${Math.round(gpsAccuracy)} m`
+						: `${playbackSpeed}× playback`}</small
 				>
 			</div>
 			<div class="trip-actions">
@@ -785,7 +986,7 @@
 					}}><Icon name="sound" /></button
 				><button
 					class="primary-button"
-					disabled={!editable || blocked || arrived || busy || liveUnavailable}
+					disabled={arrived || (!gpsTravel && (!editable || blocked || busy || liveUnavailable))}
 					onclick={() => {
 						playing = !playing;
 						candidates = [];
@@ -795,7 +996,7 @@
 					><Icon name={playing ? 'pause' : 'play'} size={17} />{playing
 						? 'Pause'
 						: 'Resume'}</button
-				><button class="icon-button" aria-label="End trip" disabled={!editable} onclick={stopTrip}
+				><button class="icon-button" aria-label="End trip" onclick={stopTrip}
 					><Icon name="close" /></button
 				>
 			</div>
@@ -806,6 +1007,16 @@
 				>Close configuration <Icon name="close" size={16} /></button
 			>
 		</div>
+		<div class="playback-control">
+			<label for="playback-speed">Travel playback speed</label>
+			<select id="playback-speed" bind:value={playbackSpeed}>
+				{#each [0.5, 1, 2, 5, 10, 20] as speed}
+					<option value={speed}>{speed}×{speed === 1 ? ' · Real time' : ''}</option>
+				{/each}
+			</select>
+			<p>Demo playback only · live GPS follows your actual movement.</p>
+		</div>
+
 		{#if shared}<ConditionsEditor
 				simulation={shared}
 				{picked}
@@ -837,17 +1048,25 @@
 				><button onclick={() => (picking = null)}>Cancel</button>
 			</div>{/if}
 		{#if !connected && shared}<div class="info-banner">
-				Shared conditions disconnected. Travel paused. <button onclick={() => void syncConditions()}
-					>Retry synchronization</button
-				>
+				Shared conditions disconnected. {gpsTravel
+					? 'GPS travel remains available.'
+					: 'Travel paused.'}
+				<button onclick={() => void syncConditions()}>Retry synchronization</button>
 			</div>{/if}
+		{#if !trafficSimulation && ownRoad?.source === 'osrm'}<div class="info-banner">
+				Live traffic unavailable · using basic road directions and estimated ETA.
+			</div>{/if}
+		{#if started && gpsTravel && gpsMessage}<div class="info-banner" role="status">
+				{gpsMessage}
+			</div>{/if}
+
 		{#if syncError}<div class="error-banner" role="alert">
 				{syncError}<button onclick={() => void syncConditions()}>Retry synchronization</button>
 			</div>{/if}
 		{#if blocked}<div class="warning-banner">
 				<Icon name="rain" />
 				<div>
-					<strong>Flood ahead. Travel paused.</strong>
+					<strong>{gpsTravel ? 'Simulated flood ahead' : 'Flood ahead. Travel paused.'}</strong>
 					<p>A simulated flood blocks the remaining route.</p>
 					<button disabled={rerouting || !editable} onclick={findAlternative}
 						>{rerouting ? 'Checking roads…' : 'Find alternative from here'}</button
@@ -874,8 +1093,8 @@
 					routeError ||
 					rainfallError ||
 					(staleRainfall
-						? 'Rainfall assessment is stale. Refresh before continuing.'
-						: 'Live traffic estimate is stale. Refresh before continuing.')}{#if !error}<button
+						? 'Rainfall assessment is stale. Refresh for updated conditions.'
+						: 'Live traffic estimate is stale. Refresh for updated timing.')}{#if !error}<button
 						onclick={() => {
 							routeRequest++;
 							weatherRequest++;

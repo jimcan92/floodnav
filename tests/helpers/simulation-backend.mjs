@@ -15,6 +15,7 @@ await db.exec(
     "utf8",
   ),
 );
+await db.exec(readFileSync(new URL("../../supabase/migrations/202609230002_live_simulation_defaults.sql", import.meta.url), "utf8"));
 const server = createServer(async (request, response) => {
   response.setHeader("content-type", "application/json");
   try {

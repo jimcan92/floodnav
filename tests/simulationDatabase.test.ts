@@ -35,16 +35,23 @@ beforeAll(async () => {
       "utf8",
     ),
   );
+await db.exec(readFileSync(new URL("../supabase/migrations/202609230002_live_simulation_defaults.sql", import.meta.url), "utf8"));
 }, 30000);
 afterAll(() => db.close());
 it("persists across application instances and atomically rejects conflicting saves", async () => {
   const first = new SimulationStore(settings, request),
     second = new SimulationStore(settings, request);
   const initial = await first.get();
-  const updated = { ...initial.conditions, trafficSimulation: false };
+  expect(initial.conditions.trafficSimulation).toBe(false);
+  expect(initial.conditions.floodSimulation).toBe(false);
+  const updated = { ...initial.conditions, trafficSimulation: true };
   const saved = await first.update(initial.revision, updated);
   expect(saved?.revision).toBe(initial.revision + 1);
   expect((await second.get()).conditions).toEqual(updated);
+  await db.exec(readFileSync(new URL("../supabase/migrations/202609230002_live_simulation_defaults.sql", import.meta.url), "utf8"));
+  expect((await second.get()).conditions).toEqual(updated);
+  expect((await second.get()).revision).toBe(saved?.revision);
+
   expect(await second.update(initial.revision, initial.conditions)).toBeNull();
   expect(
     (await new SimulationStore(settings, request).get()).conditions,

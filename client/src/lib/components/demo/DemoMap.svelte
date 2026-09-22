@@ -16,6 +16,7 @@
 		zones = [],
 		picking = false,
 		liveTraffic = false,
+		followPosition = false,
 		assessment = null,
 		onpick,
 		onzone,
@@ -29,6 +30,7 @@
 		zones?: SimulationZone[];
 		picking?: boolean;
 		liveTraffic?: boolean;
+		followPosition?: boolean;
 		assessment?: ExposureAssessment | null;
 		onpick: (p: Coordinate) => void;
 		onzone?: (id: string) => void;
@@ -180,7 +182,10 @@
 		}
 	});
 	$effect(() => {
-		if (ready) car.setLatLng(position);
+		if (ready) {
+			car.setLatLng(position);
+			if (followPosition && !picking) map.panTo(position, { animate: false });
+		}
 	});
 	$effect(() => {
 		if (!ready) return;
@@ -226,8 +231,11 @@
 
 <div class="demo-map" class:picking data-map-layer={layer} bind:this={container}></div>
 <div class="map-tools">
-	<button class="map-tool" aria-label="Recenter map" title="Recenter map" onclick={fit}
-		><Icon name="target" /></button
+	<button
+		class="map-tool"
+		aria-label="Recenter map"
+		title="Recenter map"
+		onclick={() => (followPosition ? map?.panTo(position) : fit())}><Icon name="target" /></button
 	>
 	<div class="zoom-group">
 		<button class="map-tool" aria-label="Zoom in" onclick={() => map?.zoomIn()}>+</button><button
@@ -248,7 +256,7 @@
 		</div>{/if}
 </div>
 {#if tileError}<div class="tile-notice">
-		Map tiles unavailable. Demo controls still work.<button
+		Map tiles unavailable. Travel controls still work.<button
 			onclick={() => {
 				tileError = false;
 				bases[layer]?.redraw();

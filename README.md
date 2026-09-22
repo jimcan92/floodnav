@@ -46,7 +46,7 @@ The ESP source and its connection UI are temporarily disabled during the rainfal
 
 Choose Demo scenarios for the bundled Fuente Osmeña → SM City Cebu routes: dry, primary flooded with bypass, and all blocked. Demo floods, traffic and vehicle thresholds are simulated. In sensor mode, any positive measured water blocks intersecting routes; missing readings never mean dry roads. Sensor radius is configured coverage, not measured flood extent.
 
-Google supplies map tiles only. OSRM supplies road geometry and maneuvers. Online routing has no geometric fallback; no qualifying returned alternative means no alternative is offered. The simulator is not live GPS driving guidance. Demo fixtures work without routing access, but map tiles still require internet. All vehicle examples currently use the driving profile. No road safety is guaranteed by limited sensor coverage.
+Google supplies map tiles only. OSRM supplies road geometry and maneuvers. Online routing has no geometric fallback; no qualifying returned alternative means no alternative is offered. The main travel screen supports live device GPS tracking and separate demo playback; `/research` retains its simulator. GPS requires HTTPS and location permission; keep the page open. See [travel modes](docs/DEMO.md#live-gps-travel). Demo fixtures work without routing access, but map tiles still require internet. All vehicle examples currently use the driving profile. No road safety is guaranteed by limited sensor coverage.
 
 ## Firmware
 

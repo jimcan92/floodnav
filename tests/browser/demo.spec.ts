@@ -126,6 +126,13 @@ test("anyone can travel independently and edit shared conditions without rooms",
   await second.goto("/");
   await expect(chosenEta(page)).toContainText("1 min 40 s");
   await expect(chosenEta(second)).toContainText("1 min 40 s");
+  await openControls(page);
+  await expect(page.getByLabel("Travel playback speed")).toHaveValue("1");
+  await page.getByLabel("Travel playback speed").selectOption("0.5");
+  await expect(chosenEta(page)).toContainText("1 min 40 s");
+  await expect(second.getByLabel("Travel playback speed")).toHaveValue("1");
+  await page.getByRole("button", { name: "Close configuration" }).click();
+
   await publish(request, { ...empty, zones: [{ ...zone, enabled: false }] });
   await openControls(second);
   await second.getByRole("button", { name: /^Shared traffic/ }).click();
@@ -412,4 +419,86 @@ test("all live/simulated source combinations keep synthetic data out of research
     ).toBeEnabled();
   }
   expect(calls).toBeGreaterThanOrEqual(2);
+});
+
+test("live GPS travels without simulations or weather, follows fixes and releases tracking", async ({ page, context, request }) => {
+  await page.setViewportSize({width: 390, height: 844});
+  await publish(request, { ...empty, trafficSimulation: false, floodSimulation: false });
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation({ latitude: 10.3117, longitude: 123.8938, accuracy: 5 });
+  await page.addInitScript(() => {
+    const gps = navigator.geolocation;
+    const watch = gps.watchPosition.bind(gps), clear = gps.clearWatch.bind(gps);
+    (window as any).gpsWatches = 0;
+    gps.watchPosition = (...args) => { (window as any).gpsWatches++; return watch(...args); };
+    gps.clearWatch = (id) => { (window as any).gpsWatches--; clear(id); };
+  });
+  await page.route('**/api/demo/routes', r => r.fulfill({ status: 503, json: {error: 'Traffic unavailable'} }));
+  await page.route('**/api/assessments', r => r.fulfill({ status: 503, json: {error: 'Rainfall unavailable'} }));
+  await page.route('**/api/demo/traffic/**', r => r.fulfill({ contentType: 'image/png', body: tile }));
+  const routes: string[] = [];
+  page.on('request', r => { if (r.url().includes('router.project-osrm.org')) routes.push(r.url()); });
+  await page.goto('/');
+  await expect(page.getByLabel('Travel mode')).toHaveValue('gps');
+  await expect(page.getByText('Live traffic unavailable · using basic road directions and estimated ETA.')).toBeVisible();
+  await page.getByRole('button', {name: 'Start travel', exact: true}).click();
+  await expect(page.locator('.trip-card small')).toContainText('Live GPS');
+  await expect(page.locator('.trip-card strong')).toContainText('1 min 40 s');
+  await expect.poll(() => page.evaluate(() => (window as any).gpsWatches)).toBe(1);
+  await openControls(page);
+  await page.getByLabel('Travel playback speed').selectOption('20');
+  await page.getByRole('button', {name: 'Close configuration'}).click();
+  // No synthetic movement while the device remains stationary, even at 20x playback.
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.trip-card small')).toContainText('0.00 km');
+  await publish(request, empty);
+  await expect(page.locator('.map-source-badges')).toContainText('Simulated traffic');
+  await expect(page.locator('.trip-card small')).toContainText('Live GPS');
+  await expect.poll(() => page.evaluate(() => (window as any).gpsWatches)).toBe(1);
+  await publish(request, {...empty, trafficSimulation: false, floodSimulation: false});
+  await expect(page.locator('.map-source-badges')).toContainText('Live traffic');
+  await expect(page.locator('.trip-card strong')).toContainText('1 min 40 s');
+  await page.screenshot({path: 'test-results/live-gps-mobile.png'});
+  await context.setGeolocation({latitude: 10.3119, longitude: 123.9061, accuracy: 5});
+  await expect(page.locator('.trip-card small')).not.toContainText('0.00 km');
+  await expect(page.locator('.trip-card strong')).not.toContainText('1 min 40 s');
+  await page.getByRole('button', {name: 'Pause', exact: true}).click();
+  await expect.poll(() => page.evaluate(() => (window as any).gpsWatches)).toBe(0);
+  const paused = await page.locator('.trip-card small').textContent();
+  await context.setGeolocation({latitude: 10.312, longitude: 123.907, accuracy: 5});
+  await expect(page.locator('.trip-card small')).toHaveText(paused!);
+  await page.getByRole('button', {name: 'Resume', exact: true}).click();
+  await expect.poll(() => page.evaluate(() => (window as any).gpsWatches)).toBe(1);
+  const beforeReroute = routes.length;
+  await context.setGeolocation({latitude: 10.32, longitude: 123.907, accuracy: 5});
+  await expect.poll(() => routes.length).toBeGreaterThan(beforeReroute);
+  expect(routes.at(-1)).toContain('123.907,10.32');
+  await expect(page.locator('.trip-card strong')).not.toContainText('Updating');
+  await context.setGeolocation({latitude: 10.3121, longitude: 123.9184, accuracy: 5});
+  await expect(page.locator('.trip-card strong')).toHaveText('Arrived');
+  await expect.poll(() => page.evaluate(() => (window as any).gpsWatches)).toBe(0);
+  await page.getByRole('button', {name: 'End trip'}).click();
+  await expect(page.locator('.trip-card')).toHaveCount(0);
+  const state = await (await request.get('/api/simulation')).json();
+  expect(state.conditions).toEqual({...empty, trafficSimulation: false, floodSimulation: false});
+});
+
+test("live GPS permission denial offers retry and never starts demo movement", async ({page, request}) => {
+  await publish(request, {...empty, trafficSimulation: false, floodSimulation: false});
+  await page.addInitScript(() => {
+    navigator.geolocation.watchPosition = (_success, error) => {
+      setTimeout(() => error?.({code: 1, message: 'Denied', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3}), 0);
+      return 42;
+    };
+    navigator.geolocation.clearWatch = () => {};
+  });
+  await page.route('**/api/demo/routes', r => r.fulfill({status: 503, json: {error: 'No traffic'}}));
+  await page.route('**/api/assessments', r => r.fulfill({status: 503, json: {error: 'No weather'}}));
+  await page.goto('/');
+  await page.getByRole('button', {name: 'Start travel', exact: true}).click();
+  await expect(page.getByRole('status')).toContainText('Location permission denied');
+  await expect(page.getByRole('button', {name: 'Resume', exact: true})).toBeEnabled();
+  await expect(page.locator('.trip-card small')).toContainText('0.00 km');
+  await page.getByRole('button', {name: 'End trip'}).click();
+  await expect(page.locator('.trip-card')).toHaveCount(0);
 });

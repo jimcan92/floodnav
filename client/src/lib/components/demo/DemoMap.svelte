@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { observationTime } from '$lib/services/observedFlood';
+	import type { RoadRoute } from '$lib/services/routingService';
+	import type { SimulationZone } from '$lib/types/demo';
+	import type { Coordinate } from '$lib/types/navigation';
+	import type { Bounds, ObservedFloods } from '$lib/types/observedFlood';
+	import type { ExposureAssessment } from '$lib/types/rainfall';
 	import type * as Leaflet from 'leaflet';
 	import 'leaflet/dist/leaflet.css';
+	import { onMount } from 'svelte';
 	import Icon from './Icon.svelte';
-	import type { Bounds, ObservedFloods } from '$lib/types/observedFlood';
-	import { observationTime } from '$lib/services/observedFlood';
-	import type { Coordinate } from '$lib/types/navigation';
-	import type { SimulationZone } from '$lib/types/demo';
-	import type { RoadRoute } from '$lib/services/routingService';
-	import type { ExposureAssessment } from '$lib/types/rainfall';
 	let {
 		origin,
 		destination,
@@ -39,7 +39,7 @@
 		offline?: boolean;
 		assessment?: ExposureAssessment | null;
 		observed?: ObservedFloods | null;
-		onbounds?: (bounds: Bounds)=>void;
+		onbounds?: (bounds: Bounds) => void;
 		onpick: (p: Coordinate) => void;
 		onzone?: (id: string) => void;
 		ontrafficstatus?: (message: string) => void;
@@ -62,7 +62,7 @@
 	function fit() {
 		if (!map) return;
 		const path = route?.polyline || [origin, destination];
-				map.fitBounds(L.latLngBounds(path), {
+		map.fitBounds(L.latLngBounds(path), {
 			paddingTopLeft: [24, 24],
 			paddingBottomRight: [24, 64],
 			maxZoom: 16
@@ -100,7 +100,10 @@
 			}
 			layer = window.innerWidth < 760 ? 'Streets' : 'Hybrid';
 			if (!offline) bases[layer].addTo(map);
-			map.on('moveend',()=>{const b=map.getBounds();onbounds?.([b.getWest(),b.getSouth(),b.getEast(),b.getNorth()]);});
+			map.on('moveend', () => {
+				const b = map.getBounds();
+				onbounds?.([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
+			});
 			group = L.layerGroup().addTo(map);
 			car = L.marker(position, {
 				interactive: false,
@@ -166,15 +169,27 @@
 				else onzone?.(z.id);
 			});
 		}
-		if (observed && showObserved) for(const feature of observed.features) {
-			const p=feature.properties;
-			const recent=!offline&&!observed.stale && Date.now()-Date.parse(p.observedAt)<=observed.freshnessHours*3600000;
-			const area=L.geoJSON(feature as GeoJSON.Feature,{style:{color:recent?'#16d4c4':'#93b6b2',fillColor:'#16d4c4',weight:2,fillOpacity:recent?0.35:0.16,dashArray:p.quality==='caution'?'4 4':undefined}}).addTo(group);
-			const label=document.createElement('div');
-			const age=Math.max(0,Math.floor((Date.now()-Date.parse(p.observedAt))/3600000));
-			label.textContent=`Satellite-observed flooding · ${observationTime(p.observedAt)} · ${age}h old · ${recent?'recent observation':'dated context'} · ${p.quality==='high'?'likelihood ≥80, no advisory flags':'quality caution'} · GFM ${p.version}. No water-depth estimate. ${observed.attribution}`;
-			area.bindPopup(label);
-		}
+		if (observed && showObserved)
+			for (const feature of observed.features) {
+				const p = feature.properties;
+				const recent =
+					!offline &&
+					!observed.stale &&
+					Date.now() - Date.parse(p.observedAt) <= observed.freshnessHours * 3600000;
+				const area = L.geoJSON(feature as GeoJSON.Feature, {
+					style: {
+						color: recent ? '#16d4c4' : '#93b6b2',
+						fillColor: '#16d4c4',
+						weight: 2,
+						fillOpacity: recent ? 0.35 : 0.16,
+						dashArray: p.quality === 'caution' ? '4 4' : undefined
+					}
+				}).addTo(group);
+				const label = document.createElement('div');
+				const age = Math.max(0, Math.floor((Date.now() - Date.parse(p.observedAt)) / 3600000));
+				label.textContent = `Satellite-observed flooding · ${observationTime(p.observedAt)} · ${age}h old · ${recent ? 'recent observation' : 'dated context'} · ${p.quality === 'high' ? 'likelihood ≥80, no advisory flags' : 'quality caution'} · GFM ${p.version}. No water-depth estimate. ${observed.attribution}`;
+				area.bindPopup(label);
+			}
 		if (alternative)
 			L.polyline(alternative.polyline, {
 				color: '#8aa8de',
@@ -257,38 +272,45 @@
 </script>
 
 <div
-	class="demo-map"
+	class="demo-map absolute inset-0 h-full w-full bg-base-200"
 	class:picking
 	class:offline
 	data-map-layer={layer}
 	bind:this={container}
 ></div>
-<div class="map-tools">
+
+<div class="map-tools absolute top-4 right-4 z-[400] flex flex-col gap-2">
 	<button
-		class="map-tool"
+		class="map-tool btn-base-100 btn btn-circle shadow btn-sm"
 		aria-label="Recenter map"
 		title="Recenter map"
 		onclick={() => (followPosition ? map?.panTo(position) : fit())}><Icon name="target" /></button
 	>
-	<div class="zoom-group">
-		<button class="map-tool" aria-label="Zoom in" onclick={() => map?.zoomIn()}>+</button><button
-			class="map-tool"
+	<div class="zoom-group join join-vertical">
+		<button class="map-tool btn join-item btn-sm" aria-label="Zoom in" onclick={() => map?.zoomIn()}
+			>+</button
+		><button
+			class="map-tool btn join-item btn-sm"
 			aria-label="Zoom out"
 			onclick={() => map?.zoomOut()}>−</button
 		>
 	</div>
 </div>
-{#if !offline}<div class="layer-control">
-		<button class="layer-button" onclick={() => (layerOpen = !layerOpen)} aria-expanded={layerOpen}
-			><Icon name="layers" size={18} />{layer}</button
+{#if !offline}<div class="layer-control absolute top-28 right-4 z-[400]">
+		<button
+			class="layer-button btn gap-2 shadow btn-sm"
+			onclick={() => (layerOpen = !layerOpen)}
+			aria-expanded={layerOpen}><Icon name="layers" size={18} />{layer}</button
 		>{#if layerOpen}<div class="layer-options">
 				{#each ['Streets', 'Satellite', 'Hybrid'] as name}<button
 						class:active={name === layer}
 						onclick={() => changeLayer(name)}>{name}</button
 					>{/each}
-				<label><input type="checkbox" bind:checked={showObserved}/> Satellite observations</label>
-				<label><input type="checkbox" bind:checked={showSusceptibility}/> Flood susceptibility</label>
-				<label><input type="checkbox" bind:checked={showSimulation}/> Simulation areas</label>
+				<label><input type="checkbox" bind:checked={showObserved} /> Satellite observations</label>
+				<label
+					><input type="checkbox" bind:checked={showSusceptibility} /> Flood susceptibility</label
+				>
+				<label><input type="checkbox" bind:checked={showSimulation} /> Simulation areas</label>
 			</div>{/if}
 	</div>
 {/if}

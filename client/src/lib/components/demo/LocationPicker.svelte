@@ -1,7 +1,7 @@
 <script lang="ts">
-	import Icon from './Icon.svelte';
-	import { PRESET_ORIGINS, PRESET_DESTINATIONS } from '$lib/data/mockFloodData';
+	import { PRESET_DESTINATIONS, PRESET_ORIGINS } from '$lib/data/mockFloodData';
 	import type { Waypoint } from '$lib/types/demo';
+	import Icon from './Icon.svelte';
 	let {
 		label,
 		value,
@@ -58,11 +58,12 @@
 	}
 </script>
 
-<div class="location-field">
+<div class="location-field form-control relative mb-3">
 	<label
 		><span>{label}</span>
-		<div class="location-input">
+		<div class="location-input join w-full">
 			<input
+				class="input-bordered input join-item w-full"
 				aria-label={label}
 				{disabled}
 				value={open ? query : value.name}
@@ -87,7 +88,7 @@
 				}}
 				placeholder="Search or choose on map"
 			/><button
-				class="icon-button"
+				class="btn join-item btn-square btn-outline"
 				aria-label={`Search ${label.toLowerCase()}`}
 				{disabled}
 				onclick={() => {

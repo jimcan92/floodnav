@@ -23,7 +23,11 @@ export function travelStatus(input: {
 	return 'idle';
 }
 
-export function staleTraffic(trafficSimulation: boolean, fetchedAt: string | undefined, clock: number) {
+export function staleTraffic(
+	trafficSimulation: boolean,
+	fetchedAt: string | undefined,
+	clock: number
+) {
 	return !trafficSimulation && !!fetchedAt && clock - Date.parse(fetchedAt) > 300000;
 }
 
@@ -59,19 +63,41 @@ export function mainErrorMessage(input: {
 	);
 }
 
+export function rainfallProviderError(assessment: ExposureAssessment): string {
+	return [
+		assessment.weather.errors.length
+			? `Rainfall unavailable: ${assessment.weather.errors.join('; ')}`
+			: '',
+		assessment.hazards.error ? `MGB unavailable: ${assessment.hazards.error}` : ''
+	]
+		.filter(Boolean)
+		.join(' · ');
+}
+
 export function providerStatusMessage(input: {
 	trafficSimulation: boolean;
 	floodSimulation: boolean;
 	trafficStatus: string;
 	assessment: ExposureAssessment | null;
+	rainfallError: string;
+	staleRainfall: boolean;
 }) {
+	const assessment = input.assessment;
+	const failed = input.rainfallError || (assessment && rainfallProviderError(assessment));
+	// Actionable errors and stale-data notices already appear with Retry.
+	const rainfallStatus =
+		failed || input.staleRainfall
+			? ''
+			: !assessment
+				? 'Loading rainfall assessment…'
+				: !assessment.hazards.verified
+					? 'MGB verification pending · exposure ranking unavailable.'
+					: !assessment.routes.length || assessment.routes.some((route) => route.score === null)
+						? 'Route exposure assessment incomplete · flood conditions remain unconfirmed.'
+						: `Rainfall assessed ${new Date(assessment.assessedAt).toLocaleTimeString()}`;
 	return [
 		!input.trafficSimulation ? input.trafficStatus || 'Loading live traffic…' : '',
-		!input.floodSimulation
-			? input.assessment
-				? `Rainfall assessed ${new Date(input.assessment.assessedAt).toLocaleTimeString()}`
-				: 'Loading rainfall assessment…'
-			: ''
+		!input.floodSimulation ? rainfallStatus : ''
 	]
 		.filter(Boolean)
 		.join(' · ');

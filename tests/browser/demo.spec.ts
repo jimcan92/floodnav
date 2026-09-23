@@ -742,3 +742,118 @@ test('old and quality-limited satellite observations remain context, with indepe
   await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(paths);
   await expect(page.getByLabel('Simulation areas')).toBeChecked();
 });
+
+for (const failure of ['verification', 'coverage', 'weather', 'hazard', 'request']) {
+  test(`rainfall status separates ${failure} and recovers on retry`, async ({ page, request }) => {
+    let recovered = false;
+    await page.route('**/api/assessments', async (r) => {
+      if (failure === 'request' && !recovered) return r.fulfill({ status: 503, json: { error: 'Assessment provider unavailable' } });
+      const now = new Date().toISOString();
+      return r.fulfill({ json: {
+        assessedAt: now, recommendedKey: null,
+        routes: r.request().postDataJSON().roads.map((road: any) => ({ key: road.key, score: recovered ? 1 : null })),
+        hazards: { features: [], verified: recovered || failure === 'coverage', ...(failure === 'hazard' && !recovered ? { error: 'MGB query failed' } : {}) },
+        weather: { errors: failure === 'weather' && !recovered ? ['OpenWeather timeout'] : [], samples: [] }
+      } });
+    });
+    await publish(request, { ...empty, floodSimulation: false });
+    await page.goto('/');
+    const notices = page.locator('#mobile-notifications');
+    if (failure === 'verification' || failure === 'coverage') {
+      await expect(notices).toContainText(failure === 'verification' ? 'MGB verification pending' : 'Route exposure assessment incomplete');
+      await expect(notices.locator('.error-banner')).toHaveCount(0);
+      await expect(notices.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
+      await page.getByRole('button', { name: 'Start travel', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    } else {
+      await expect(notices.locator('.error-banner')).toContainText(failure === 'weather' ? 'Rainfall unavailable' : failure === 'hazard' ? 'MGB unavailable' : 'assessment request failed');
+      await expect(notices).not.toContainText('Rainfall assessed');
+      await expect(notices).not.toContainText('MGB verification pending');
+      recovered = true;
+      await notices.getByRole('button', { name: 'Retry', exact: true }).click();
+      await expect(notices).toContainText('Rainfall assessed');
+      await expect(notices.locator('.error-banner')).toHaveCount(0);
+    }
+  });
+}
+
+test('compact planner keeps the map clear and preserves routes when reopened', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/');
+  const panel = page.locator('#directions-panel');
+  await expect(page.getByRole('button', { name: 'Search destination', exact: true })).toBeVisible();
+  await expect(panel).toBeHidden();
+  await expect(page.locator('.insights-panel')).toHaveCount(0);
+  await page.screenshot({ path: '/tmp/floodnav-compact-map.png' });
+  await page.getByRole('button', { name: 'Open directions', exact: true }).click();
+  await expect(panel).toBeVisible();
+  await expect(panel.locator('.demo-route-card')).toHaveCount(2);
+  await panel.screenshot({ path: '/tmp/floodnav-open-planner.png' });
+  await expect(panel.getByText('Satellite flood observations', { exact: true })).toBeHidden();
+  await panel.getByText('Flood & weather details', { exact: true }).click();
+  await expect(panel.getByText('Satellite flood observations', { exact: true })).toBeVisible();
+  await panel.getByText('Flood & weather details', { exact: true }).click();
+  const destination = await panel.getByRole('textbox', { name: 'Destination', exact: true }).inputValue();
+  await panel.locator('.demo-route-card').nth(1).click();
+  await page.getByRole('button', { name: 'Collapse directions' }).click();
+  await expect(panel).toBeHidden();
+  await page.getByRole('button', { name: 'Open directions', exact: true }).click();
+  await expect(panel.getByRole('textbox', { name: 'Destination', exact: true })).toHaveValue(destination);
+  await expect(panel.locator('.demo-route-card').nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Start travel', exact: true }).click();
+  await expect(panel).toBeHidden();
+  await page.getByRole('button', { name: 'Open journey details' }).click();
+  await expect(panel.locator('.maneuver-card')).toBeVisible();
+  await page.locator('.leaflet-container').click({ position: { x: 700, y: 300 } });
+  await expect(panel).toBeHidden();
+});
+
+test('compact search opens destination input and map picking collapses the planner', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Search destination', exact: true }).click();
+  const destination = page.getByRole('textbox', { name: 'Destination', exact: true });
+  await expect(destination).toBeEnabled();
+  // Reopen once data is ready so keyboard focus also opens the place chooser.
+  await page.getByRole('button', { name: 'Collapse directions' }).click();
+  await page.getByRole('button', { name: 'Search destination', exact: true }).click();
+  await expect(destination).toBeFocused();
+  await page.getByRole('button', { name: 'Choose on map', exact: true }).click();
+  await expect(page.locator('#directions-panel')).toBeHidden();
+  await page.locator('.leaflet-container').click({ position: { x: 700, y: 300 } });
+  await page.getByRole('button', { name: 'Open directions', exact: true }).click();
+  await expect(destination).not.toHaveValue('SM City Cebu');
+});
+
+test('map status chips and bottom-left layers stay compact', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.route('**/api/demo/routes', r => r.fulfill({ status: 503, json: { error: 'Unavailable' } }));
+  await publish(request, { ...empty, trafficSimulation: false });
+  await page.goto('/');
+  const chips = page.locator('.map-source-badges');
+  await expect(chips).toContainText('Basic ETA · no live traffic');
+  await expect(page.locator('#mobile-notifications .info-banner')).toHaveCount(0);
+  expect((await chips.boundingBox())!.y).toBeLessThan(80);
+  const layers = page.getByRole('button', { name: 'Map layers', exact: true });
+  await layers.click();
+  const popup = page.locator('#map-layer-options');
+  await expect(popup).toBeVisible();
+  const triggerBox = (await layers.boundingBox())!;
+  expect(triggerBox.x).toBeLessThan(50);
+  expect(triggerBox.y).toBeGreaterThan(750);
+  expect((await popup.boundingBox())!.y).toBeLessThan(triggerBox.y);
+  await page.getByRole('checkbox', { name: 'Flood susceptibility' }).uncheck();
+  await expect(page.getByRole('checkbox', { name: 'Flood susceptibility' })).not.toBeChecked();
+  await page.screenshot({ path: '/tmp/floodnav-map-controls.png' });
+  await page.getByRole('button', { name: 'Satellite', exact: true }).click();
+  await expect(page.locator('.demo-map')).toHaveAttribute('data-map-layer', 'Satellite');
+  await layers.click();
+  await expect(popup).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(popup).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await layers.click();
+  await expect(popup).toBeVisible();
+  expect(await popup.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect((await popup.boundingBox())!.x).toBeGreaterThanOrEqual(0);
+  await page.screenshot({ path: '/tmp/floodnav-mobile-controls.png' });
+});

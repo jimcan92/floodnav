@@ -9,6 +9,7 @@ export const layout = $state({
 	mobileViewportHeight: 0,
 	mobilePanel: null as MobilePanel,
 	desktopDrawerOpen: false,
+	plannerCollapsed: true,
 	picking: null as PickKind | null,
 	panelTrigger: null as HTMLElement | null
 });
@@ -35,6 +36,17 @@ export async function setMobilePanel(panel: MobilePanel, restoreFocus = false) {
 		document.querySelector<HTMLButtonElement>('.configuration-close button')?.focus();
 }
 
+export async function setPlannerOpen(open: boolean, focusDestination = false) {
+	layout.plannerCollapsed = !open;
+	await tick();
+	if (open) {
+		const selector = focusDestination
+			? '#directions-panel input[aria-label="Destination"]'
+			: '#directions-panel .planner-close';
+		document.querySelector<HTMLElement>(selector)?.focus();
+	} else document.querySelector<HTMLElement>('.compact-planner-search')?.focus();
+}
+
 export function setConfiguration(open: boolean) {
 	if (layout.mobile) void setMobilePanel(open ? 'configuration' : null, !open);
 	else {
@@ -45,6 +57,7 @@ export function setConfiguration(open: boolean) {
 
 export function beginPick(kind: PickKind) {
 	layout.picking = kind;
+	layout.plannerCollapsed = true;
 	void setMobilePanel(null);
 }
 
@@ -72,6 +85,14 @@ export function bindLayoutMedia() {
 	update();
 	query.addEventListener('change', update);
 	const outside = (event: PointerEvent) => {
+		if (
+			!layout.mobile &&
+			!layout.picking &&
+			event.target instanceof Element &&
+			event.target.closest('.leaflet-container') &&
+			!event.target.closest('.leaflet-control, .leaflet-popup')
+		)
+			layout.plannerCollapsed = true;
 		if (
 			layout.mobilePanel === 'notifications' &&
 			event.target instanceof Element &&

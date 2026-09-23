@@ -1,5 +1,6 @@
 import { demoId } from '$lib/services/demoId';
 import { loadRainfallAssessment } from '$lib/utils/http';
+import { rainfallProviderError } from '$lib/utils/messages';
 import { demo, navigation } from './core.svelte';
 
 export function bindRainfallFetch() {
@@ -19,16 +20,13 @@ export function bindRainfallFetch() {
 		.then((data) => {
 			if (cancelled) return;
 			demo.assessment = data;
-			if (
-				!data.hazards.verified ||
-				data.weather.errors.length ||
-				data.routes.some((route: { score: number | null }) => route.score === null)
-			)
-				demo.rainfallError =
-					'Live rainfall assessment incomplete. GPS navigation remains available; flood conditions are unconfirmed.';
+			demo.rainfallError = rainfallProviderError(data);
 		})
 		.catch((error) => {
-			if (!cancelled) demo.rainfallError = error.message || 'Rainfall unavailable.';
+			if (!cancelled)
+				demo.rainfallError = abort.signal.aborted
+					? 'Rainfall/MGB assessment request timed out. Retry to refresh conditions.'
+					: `Rainfall/MGB assessment request failed: ${error.message || 'Provider unavailable.'}`;
 		})
 		.finally(() => clearTimeout(timer));
 	return () => {

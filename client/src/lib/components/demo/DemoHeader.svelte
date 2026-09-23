@@ -1,14 +1,14 @@
 <script lang="ts">
+	import Icon from '$lib/components/Icon.svelte';
 	import ThemeController from '$lib/components/ThemeController.svelte';
 	import { demo, navigation } from '$lib/states/demo.svelte';
 	import {
 		cancelPick,
 		layout,
+		layoutView,
 		setConfiguration,
-		setMobilePanel,
-		layoutView
+		setMobilePanel
 	} from '$lib/states/layout.svelte';
-	import Icon from '$lib/components/Icon.svelte';
 </script>
 
 <header
@@ -16,14 +16,6 @@
 >
 	<a href="/" class="brand flex items-center gap-2 font-bold"><Icon name="route" />FloodNav</a>
 	<div class="flex items-center gap-2">
-		<ThemeController />
-		<button
-			class="icon-button btn btn-circle btn-ghost btn-sm"
-			aria-label="Simulation controls"
-			aria-expanded={layoutView.drawerOpen}
-			disabled={!demo.mounted}
-			onclick={() => setConfiguration(!layoutView.drawerOpen)}><Icon name="settings" /></button
-		>
 		<button
 			class="icon-button notification-toggle btn btn-circle btn-ghost btn-sm"
 			disabled={!demo.mounted}
@@ -41,6 +33,14 @@
 					>{navigation.notices}</span
 				>{/if}
 		</button>
+		<button
+			class="icon-button btn btn-circle btn-ghost btn-sm"
+			aria-label="Simulation controls"
+			aria-expanded={layoutView.drawerOpen}
+			disabled={!demo.mounted}
+			onclick={() => setConfiguration(!layoutView.drawerOpen)}><Icon name="settings" /></button
+		>
+		<ThemeController />
 	</div>
 </header>
 

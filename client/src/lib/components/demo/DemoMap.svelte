@@ -1,15 +1,17 @@
 <script lang="ts">
-	import { createMapMarker } from '$lib/utils/mapMarker';
+	import Icon from '$lib/components/Icon.svelte';
 	import { observationTime } from '$lib/services/observedFlood';
 	import type { RoadRoute } from '$lib/services/routingService';
+	import { layout } from '$lib/states/layout.svelte';
 	import type { SimulationZone } from '$lib/types/demo';
 	import type { Coordinate } from '$lib/types/navigation';
 	import type { Bounds, ObservedFloods } from '$lib/types/observedFlood';
 	import type { ExposureAssessment } from '$lib/types/rainfall';
+	import { createMapMarker } from '$lib/utils/mapMarker';
+	import { Locate, Minus, Plus } from '@lucide/svelte';
 	import type * as Leaflet from 'leaflet';
 	import 'leaflet/dist/leaflet.css';
 	import { onMount } from 'svelte';
-	import Icon from '$lib/components/Icon.svelte';
 	let {
 		origin,
 		destination,
@@ -287,52 +289,109 @@
 	bind:this={container}
 ></div>
 
-<div class="map-tools absolute top-4 right-4 z-[400] flex flex-col gap-2">
+<div class="map-tools absolute top-4 right-4 z-[400] flex flex-col gap-2 max-[759px]:top-32">
 	<button
 		class="map-tool btn-base-100 btn btn-circle shadow btn-sm"
 		aria-label="Recenter map"
 		title="Recenter map"
-		onclick={() => (followPosition ? map?.panTo(position) : fit())}><Icon name="target" /></button
+		onclick={() => (followPosition ? map?.panTo(position) : fit())}
 	>
+		<Locate class="h-4 w-4" />
+	</button>
 	<div class="zoom-group join join-vertical">
-		<button class="map-tool btn join-item btn-sm" aria-label="Zoom in" onclick={() => map?.zoomIn()}
-			>+</button
-		><button
+		<button
+			class="map-tool btn join-item btn-sm"
+			aria-label="Zoom in"
+			onclick={() => map?.zoomIn()}
+		>
+			<Plus class="h-3 w-3" />
+		</button>
+		<button
 			class="map-tool btn join-item btn-sm"
 			aria-label="Zoom out"
-			onclick={() => map?.zoomOut()}>−</button
+			onclick={() => map?.zoomOut()}
 		>
+			<Minus class="h-3 w-3" />
+		</button>
 	</div>
 </div>
-{#if !offline}<div class="layer-control absolute top-28 right-4 z-[400]">
+{#if !offline}
+	<div
+		class="layer-control absolute bottom-6 left-6 z-[460] max-[759px]:left-3"
+		style:bottom={layout.mobile
+			? layout.mobilePanel === 'controls'
+				? 'calc(var(--mobile-viewport-height, 100dvh) * 0.5 + 1.5rem)'
+				: '8.5rem'
+			: undefined}
+	>
 		<button
-			class="layer-button btn gap-2 shadow btn-sm"
+			class="layer-button btn h-14 gap-2 rounded-xl border-base-300 bg-base-100 px-4 text-base-content shadow-lg"
 			onclick={() => (layerOpen = !layerOpen)}
-			aria-expanded={layerOpen}><Icon name="layers" size={18} />{layer}</button
-		>{#if layerOpen}<div class="layer-options">
-				{#each ['Streets', 'Satellite', 'Hybrid'] as name}<button
-						class="btn"
-						class:active={name === layer}
-						onclick={() => changeLayer(name)}>{name}</button
-					>{/each}
-				<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
-					><input class="checkbox checkbox-primary" type="checkbox" bind:checked={showObserved} /> Satellite
-					observations</label
-				>
-				<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
-					><input
-						class="checkbox checkbox-primary"
-						type="checkbox"
-						bind:checked={showSusceptibility}
-					/> Flood susceptibility</label
-				>
-				<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
-					><input class="checkbox checkbox-primary" type="checkbox" bind:checked={showSimulation} /> Simulation
-					areas</label
-				>
-			</div>{/if}
+			aria-label="Map layers"
+			aria-expanded={layerOpen}
+			aria-controls="map-layer-options"
+			><Icon name="layers" size={22} /><span class="text-left"
+				>Layers<small class="block text-[10px] font-normal opacity-60">{layer}</small></span
+			></button
+		>
+		{#if layerOpen}
+			<div
+				id="map-layer-options"
+				class="layer-options absolute bottom-full left-0 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-base-300 bg-base-100 p-3 text-base-content shadow-xl"
+			>
+				<div class="mb-3 flex items-center justify-between">
+					<strong class="text-sm">Map layers</strong><button
+						class="btn btn-circle btn-ghost btn-xs"
+						aria-label="Close map layers"
+						onclick={() => (layerOpen = false)}><Icon name="close" size={16} /></button
+					>
+				</div>
+				<div class="grid grid-cols-3 gap-1" role="group" aria-label="Base map">
+					{#each ['Streets', 'Satellite', 'Hybrid'] as name}<button
+							class="btn px-1 btn-sm"
+							class:btn-primary={name === layer}
+							class:btn-ghost={name !== layer}
+							aria-pressed={name === layer}
+							onclick={() => changeLayer(name)}>{name}</button
+						>{/each}
+				</div>
+				<div class="mt-3 space-y-3 border-t border-base-300 pt-3 text-xs">
+					<label class="flex cursor-pointer items-center justify-between gap-3"
+						><span>Satellite observations</span><input
+							class="toggle toggle-primary toggle-sm"
+							type="checkbox"
+							bind:checked={showObserved}
+						/></label
+					>
+					<label class="flex cursor-pointer items-center justify-between gap-3"
+						><span>Flood susceptibility</span><input
+							class="toggle toggle-primary toggle-sm"
+							type="checkbox"
+							bind:checked={showSusceptibility}
+						/></label
+					>
+					<label class="flex cursor-pointer items-center justify-between gap-3"
+						><span>Simulation areas</span><input
+							class="toggle toggle-primary toggle-sm"
+							type="checkbox"
+							bind:checked={showSimulation}
+						/></label
+					>
+				</div>
+			</div>
+		{/if}
 	</div>
 {/if}
+<svelte:window
+	onkeydown={(event) => {
+		if (event.key === 'Escape') layerOpen = false;
+	}}
+	onpointerdown={(event) => {
+		if (event.target instanceof Element && !event.target.closest('.layer-control'))
+			layerOpen = false;
+	}}
+/>
+
 {#if tileError && !offline}<div class="tile-notice">
 		Map tiles unavailable. Travel controls still work.<button
 			class="btn"

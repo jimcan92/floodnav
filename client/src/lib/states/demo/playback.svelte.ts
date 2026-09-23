@@ -51,6 +51,7 @@ export function startTrip() {
 	runtime.rerouteGeneration++;
 	demo.rerouting = false;
 	demo.started = true;
+	layout.plannerCollapsed = true;
 	demo.playing = true;
 }
 

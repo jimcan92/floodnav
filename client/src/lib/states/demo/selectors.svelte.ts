@@ -152,21 +152,21 @@ const providerMessage = $derived(
 		trafficSimulation,
 		floodSimulation,
 		trafficStatus: demo.trafficStatus,
-		assessment: demo.assessment
+		assessment: demo.assessment,
+		rainfallError: demo.rainfallError,
+		staleRainfall
 	})
 );
 const notices = $derived(
 	countFlags([
 		demo.offlineDemo,
 		!demo.connected && demo.shared && !demo.offlineDemo,
-		!trafficSimulation && ownRoad?.source === 'osrm',
 		demo.started && gpsTravel && demo.gpsMessage,
 		demo.syncError && !demo.offlineDemo,
 		blocked,
-		alternative && alternativeEvaluation,
+		demo.started && alternative && alternativeEvaluation,
 		mainError,
 		demo.notice,
-		providerMessage,
 		observedEncounters.length > 0,
 		observedStale(floods.data)
 	])

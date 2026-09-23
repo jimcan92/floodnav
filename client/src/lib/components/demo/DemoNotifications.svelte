@@ -135,18 +135,14 @@
 			>
 		</div>
 	{/if}
-	{#if !navigation.trafficSimulation && navigation.ownRoad?.source === 'osrm'}
-		<div class="info-banner alert alert-info">
-			Live traffic unavailable · using basic road directions and estimated ETA.
-		</div>
-	{/if}
+
 	{#if demo.started && navigation.gpsTravel && demo.gpsMessage}<div
 			class="info-banner alert alert-info"
 			role="status"
 		>
 			{demo.gpsMessage}
 		</div>{/if}
-	{#if navigation.alternative && navigation.alternativeEvaluation}
+	{#if demo.started && navigation.alternative && navigation.alternativeEvaluation}
 		<div class="alternative-banner info-banner alert justify-between alert-info">
 			<span
 				>{navigation.blocked
@@ -176,7 +172,4 @@
 			>
 		</div>
 	{/if}
-	{#if navigation.providerMessage}<div class="info-banner alert alert-info">
-			{navigation.providerMessage}
-		</div>{/if}
 </div>

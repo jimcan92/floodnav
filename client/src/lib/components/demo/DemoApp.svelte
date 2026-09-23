@@ -1,7 +1,6 @@
 <script lang="ts">
 	import DirectionsPanel from './DirectionsPanel.svelte';
 	import ScenarioDrawer from './ScenarioDrawer.svelte';
-	import JourneyInsights from './JourneyInsights.svelte';
 
 	import { pwaState } from '$lib/services/pwaState.svelte';
 	import { speechService } from '$lib/services/speechService';
@@ -39,6 +38,7 @@
 	import { onMount, untrack } from 'svelte';
 
 	import ConditionsSummary from './ConditionsSummary.svelte';
+	import StatusChips from './StatusChips.svelte';
 	import DemoHeader from './DemoHeader.svelte';
 	import DemoMap from './DemoMap.svelte';
 	import DemoNotifications from './DemoNotifications.svelte';
@@ -175,33 +175,9 @@
 			ontrafficstatus={(value) => (demo.trafficStatus = value)}
 		/>
 	</div>
-	<div
-		class="map-source-badges absolute bottom-4 left-4 z-10 flex max-w-[calc(100vw-2rem)] flex-wrap gap-2 text-xs"
-	>
-		{#if demo.offlineDemo}<span class="badge badge-ghost">Offline demo · this device only</span
-			>{/if}
-		<span class="badge badge-ghost"
-			><i class:live={!navigation.conditions.trafficSimulation}></i>{navigation.conditions
-				.trafficSimulation
-				? 'Simulated traffic'
-				: 'Live traffic'}</span
-		><span class="badge badge-ghost"
-			><i class:live={!navigation.conditions.floodSimulation}></i>{navigation.conditions
-				.floodSimulation
-				? 'Simulated flooding'
-				: 'Live rainfall'}</span
-		>
-		{#if demo.previewZones && (layoutView.drawerOpen || layout.picking === 'traffic' || layout.picking === 'flood')}<span
-				class="badge badge-warning">Unpublished preview · ETA uses applied conditions</span
-			>{/if}
-	</div>
+	<StatusChips />
 	<DirectionsPanel {routeChoices} {conditionsSummary} />
-	{#if layout.wide}<aside
-			class="insights-panel absolute top-6 right-6 z-[400] flex max-h-[calc(100dvh-3rem)] w-[360px] flex-col gap-3 overflow-auto rounded-box border border-base-300 bg-base-100 p-4 shadow-xl"
-			aria-label="Route options and conditions"
-		>
-			<JourneyInsights {routeChoices} {conditionsSummary} />
-		</aside>{/if}
+
 	{#if demo.started}
 		<TripProgress
 			onToggleMute={() => {

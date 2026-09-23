@@ -1,6 +1,8 @@
 <script lang="ts">
+	import ZoneList from './ZoneList.svelte';
+	import ZoneEditor from './ZoneEditor.svelte';
 	import { untrack } from 'svelte';
-	import Icon from './Icon.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import { demoId } from '$lib/services/demoId';
 	import type { Conditions, SimulationState, SimulationZone } from '$lib/types/demo';
 	import type { Coordinate, DemoScenario } from '$lib/types/navigation';
@@ -109,8 +111,8 @@
 	}
 </script>
 
-<div class="controller-heading">
-	<div class="eyebrow">SCENARIO CONTROL</div>
+<div class="controller-heading space-y-2 py-4">
+	<div class="eyebrow text-xs font-semibold tracking-wide text-primary">SCENARIO CONTROL</div>
 	<h1>Change the journey.</h1>
 	<p>
 		{localOnly
@@ -119,7 +121,7 @@
 	</p>
 </div>
 {#if dirty && simulation.revision !== version}
-	<div class="conflict-review" role="status">
+	<div class="conflict-review alert block space-y-2 alert-warning" role="status">
 		<strong>Shared conditions changed</strong>
 		<p>
 			Latest: traffic simulation {simulation.conditions.trafficSimulation ? 'on' : 'off'}, flood
@@ -138,20 +140,23 @@
 			onclick={() => {
 				version = simulation.revision;
 				message = 'Latest settings reviewed. Apply changes to publish your draft.';
-			}}>Keep my draft after review</button>
+			}}>Keep my draft after review</button
+		>
 		>
 	</div>
 {/if}
 <form
-	class="conditions-form"
+	class="conditions-form space-y-4"
 	onsubmit={(e) => {
 		e.preventDefault();
 		void apply();
 	}}
 >
-	<section class="condition-section">
-		<div class="section-heading">
-			<span class="section-symbol traffic-symbol"><Icon name="traffic" /></span>
+	<section class="condition-section card gap-3 border border-base-300 bg-base-200 p-3">
+		<div class="section-heading flex items-center justify-between gap-3">
+			<span class="section-symbol traffic-symbol rounded-box p-2 text-warning"
+				><Icon name="traffic" /></span
+			>
 			<div>
 				<h2>Traffic</h2>
 				<small>{draft.trafficSimulation ? 'Custom traffic areas' : 'Live · TomTom'}</small>
@@ -165,7 +170,7 @@
 				onchange={changed}
 			/>
 		</div>
-		<div class="mode-note">
+		<div class="mode-note flex flex-wrap justify-between gap-2 text-xs text-base-content/70">
 			Simulation {draft.trafficSimulation ? 'on' : 'off'}
 			<span>{draft.trafficSimulation ? 'You control congestion' : 'Uses live traffic and ETA'}</span
 			>
@@ -176,9 +181,10 @@
 				onclick={() => onpick('traffic')}><Icon name="plus" size={17} />Add traffic area</button
 			>{/if}
 	</section>
-	<section class="condition-section">
-		<div class="section-heading">
-			<span class="section-symbol flood-symbol"><Icon name="rain" /></span>
+	<section class="condition-section card gap-3 border border-base-300 bg-base-200 p-3">
+		<div class="section-heading flex items-center justify-between gap-3">
+			<span class="section-symbol flood-symbol rounded-box p-2 text-info"><Icon name="rain" /></span
+			>
 			<div>
 				<h2>Rainfall & flooding</h2>
 				<small
@@ -194,7 +200,7 @@
 				onchange={changed}
 			/>
 		</div>
-		<div class="mode-note">
+		<div class="mode-note flex flex-wrap justify-between gap-2 text-xs text-base-content/70">
 			Simulation {draft.floodSimulation ? 'on' : 'off'}
 			<span
 				>{draft.floodSimulation
@@ -208,124 +214,24 @@
 				onclick={() => onpick('flood')}><Icon name="plus" size={17} />Add flood area</button
 			>{/if}
 	</section>
-	<section class="zone-section">
-		<div class="section-title">
-			<h2>Scenario areas <span>{draft.zones.length}</span></h2>
-			{#if draft.zones.length}<button
-					type="button"
-					class="text-button btn btn-ghost btn-xs"
-					onclick={() => {
-						draft.zones = [];
-						editing = null;
-						changed();
-					}}>Clear all</button>
-				>{/if}
-		</div>
-		{#if !draft.zones.length}<div class="empty-zones">
-				<Icon name="pin" size={26} />
-				<p>No areas yet</p>
-				<small>Add an area, then click the map to place it.</small>
-			</div>{/if}
-		{#each draft.zones as z (z.id)}<div class="zone-row" class:zone-selected={editing === z.id}>
-				<button
-					type="button"
-					class="zone-select"
-					onclick={() => (editing = editing === z.id ? null : z.id)}
-					><span
-						class:flood-symbol={z.kind === 'flood'}
-						class:traffic-symbol={z.kind === 'traffic'}
-						class="mini-symbol"
-						><Icon name={z.kind === 'flood' ? 'rain' : 'traffic'} size={18} /></span
-					><span
-						><strong>{z.name}</strong><small
-							>{z.kind === 'traffic' ? z.level : `${z.depthCm} cm · ${z.rainMmH} mm/h`} · {z.radiusMeters}
-							m {z.enabled ? '' : '· Disabled'}</small
-						></span
-					></button
-				><button
-					type="button"
-					class="icon-button btn btn-square btn-ghost btn-sm"
-					aria-label={`Delete ${z.name}`}
-					onclick={() => {
-						draft.zones = draft.zones.filter((v) => v.id !== z.id);
-						changed();
-					}}><Icon name="trash" size={17} /></button
-				>
-			</div>{/each}
-	</section>
-	{#if zone}<section class="zone-editor" aria-label="Area editor">
-			<div class="section-title">
-				<h2>Edit {zone.kind} area</h2>
-				<button
-					type="button"
-					class="icon-button"
-					aria-label="Close area editor"
-					onclick={() => (editing = null)}><Icon name="close" size={17} /></button
-				>
-			</div>
-			<label
-				>Area name<input
-					required
-					maxlength="100"
-					value={zone.name}
-					oninput={(e) => update({ name: e.currentTarget.value })}
-				/></label
-			>
-			<label
-				>Radius (m)<input
-					type="number"
-					min="10"
-					max="1000"
-					required
-					value={zone.radiusMeters}
-					oninput={(e) => update({ radiusMeters: e.currentTarget.valueAsNumber })}
-				/></label
-			>
-			{#if zone.kind === 'traffic'}<label
-					>Traffic level<select
-						value={zone.level}
-						onchange={(e) => update({ level: e.currentTarget.value as SimulationZone['level'] })}
-						><option value="light">Light</option><option value="moderate">Moderate</option><option
-							value="heavy">Heavy</option
-						></select
-					></label
-				>
-			{:else}<div class="field-pair">
-					<label
-						>Flood depth (cm)<input
-							type="number"
-							min="0"
-							max="200"
-							required
-							value={zone.depthCm}
-							oninput={(e) => update({ depthCm: e.currentTarget.valueAsNumber })}
-						/></label
-					><label
-						>Rainfall (mm/h)<input
-							type="number"
-							min="0"
-							max="300"
-							required
-							value={zone.rainMmH}
-							oninput={(e) => update({ rainMmH: e.currentTarget.valueAsNumber })}
-						/></label
-					>
-				</div>
-				<small
-					>Depth slows travel and blocks vehicles above their demo threshold. Rainfall is a separate
-					scenario value.</small
-				>{/if}
-			<label class="inline-check"
-				><input
-					type="checkbox"
-					checked={zone.enabled}
-					onchange={(e) => update({ enabled: e.currentTarget.checked })}
-				/>Area enabled</label
-			>
-		</section>{/if}
-	<div class="publish-bar">
+	<ZoneList
+		zones={draft.zones}
+		{editing}
+		onselect={(id) => (editing = id)}
+		onclear={() => {
+			draft.zones = [];
+			editing = null;
+			changed();
+		}}
+		onremove={(id) => {
+			draft.zones = draft.zones.filter((z) => z.id !== id);
+			changed();
+		}}
+	/>
+	{#if zone}<ZoneEditor {zone} {update} onclose={() => (editing = null)} />{/if}
+	<div class="publish-bar flex flex-col gap-2">
 		<button
-			class="primary-button"
+			class="primary-button btn btn-primary"
 			disabled={saving || !dirty || simulation.revision !== version}
 			type="submit"
 			>{saving ? 'Publishing…' : 'Apply changes'}<Icon name="arrow" size={17} /></button
@@ -336,7 +242,7 @@
 					: `${localOnly ? 'Local demo' : 'Shared conditions'} · revision ${simulation.revision}`)}</small
 		>{#if dirty}<button
 				type="button"
-				class="text-button"
+				class="text-button btn btn-ghost btn-sm"
 				onclick={() => {
 					draft = clone(simulation.conditions);
 					version = simulation.revision;
@@ -347,15 +253,16 @@
 			>{/if}
 	</div>
 </form>
-<details class="preset-section">
+<details class="preset-section rounded-box border border-base-300 p-3">
 	<summary>Ready-made demo scenarios</summary>
 	<p>
 		{localOnly
 			? 'Presets change this device’s offline demo only.'
 			: 'Presets change shared conditions near Fuente → SM City.'} Trips are not reset.
 	</p>
-	<div class="preset-buttons">
+	<div class="preset-buttons mt-3 flex flex-wrap gap-2">
 		{#each [['dry', 'Dry roads'], ['bypass', 'Flood + bypass'], ['blocked', 'All blocked']] as [id, title]}<button
+				class="btn"
 				disabled={saving || simulation.revision !== version}
 				onclick={() => void apply(id as DemoScenario)}>{title}</button
 			>{/each}

@@ -91,7 +91,7 @@ async function mock(page: Page) {
   );
 }
 const chosenEta = (page: Page) =>
-  page.locator(".demo-route-card.chosen strong");
+  page.getByRole("button", { pressed: true }).locator("strong");
 async function openNotifications(page:Page) {
   const bell=page.getByRole('button',{name:/^Notifications, /});
   if(await bell.getAttribute('aria-expanded')!=='true') await bell.click();

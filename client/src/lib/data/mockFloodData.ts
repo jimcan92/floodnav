@@ -1,3 +1,4 @@
+import type { IconName } from '$lib/utils/icons';
 import type { FloodHazardZone, Coordinate } from '../types/navigation';
 
 export interface LocationPreset {
@@ -6,7 +7,7 @@ export interface LocationPreset {
 	shortDescription: string;
 	coordinate: Coordinate;
 	category?: 'popular' | 'commercial' | 'transit' | 'health' | 'flood_prone';
-	icon?: string;
+	icon?: IconName;
 }
 
 export const PRESET_ORIGINS: LocationPreset[] = [
@@ -16,7 +17,7 @@ export const PRESET_ORIGINS: LocationPreset[] = [
 		shortDescription: 'Uptown Commercial Center',
 		coordinate: [10.3117, 123.8938],
 		category: 'popular',
-		icon: '⭕'
+		icon: 'circle'
 	},
 	{
 		id: 'cebu_it_park',
@@ -24,7 +25,7 @@ export const PRESET_ORIGINS: LocationPreset[] = [
 		shortDescription: 'Salinas Drive · Business Process District',
 		coordinate: [10.3297, 123.9062],
 		category: 'commercial',
-		icon: '💼'
+		icon: 'work'
 	},
 	{
 		id: 'cebu_capitol',
@@ -32,7 +33,7 @@ export const PRESET_ORIGINS: LocationPreset[] = [
 		shortDescription: 'Escario St / Capitol Site',
 		coordinate: [10.3173, 123.8907],
 		category: 'popular',
-		icon: '🏛️'
+		icon: 'landmark'
 	},
 	{
 		id: 'cebu_ayala_origin',
@@ -40,7 +41,7 @@ export const PRESET_ORIGINS: LocationPreset[] = [
 		shortDescription: 'Cardinal Rosales Ave, Cebu Business Park',
 		coordinate: [10.3177, 123.9054],
 		category: 'commercial',
-		icon: '🛍️'
+		icon: 'shopping'
 	},
 	{
 		id: 'cebu_emall_origin',
@@ -48,7 +49,7 @@ export const PRESET_ORIGINS: LocationPreset[] = [
 		shortDescription: 'Leon Kilat Street, Sambag I, Cebu City',
 		coordinate: [10.2995, 123.8967],
 		category: 'transit',
-		icon: '🕒'
+		icon: 'clock'
 	},
 	{
 		id: 'mandaue_city_hall_origin',
@@ -56,7 +57,7 @@ export const PRESET_ORIGINS: LocationPreset[] = [
 		shortDescription: 'Centro, Mandaue City',
 		coordinate: [10.3341, 123.9431],
 		category: 'popular',
-		icon: '🏛️'
+		icon: 'landmark'
 	},
 	{
 		id: 'cebu_chong_hua_origin',
@@ -64,7 +65,7 @@ export const PRESET_ORIGINS: LocationPreset[] = [
 		shortDescription: 'J. Llorente St, Fuente Area',
 		coordinate: [10.3135, 123.8924],
 		category: 'health',
-		icon: '🏥'
+		icon: 'hospital'
 	}
 ];
 
@@ -75,7 +76,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'Historic downtown, prone to tidal / flash floods',
 		coordinate: [10.2974, 123.8996],
 		category: 'flood_prone',
-		icon: '🌊'
+		icon: 'waves'
 	},
 	{
 		id: 'sm_city_cebu',
@@ -83,7 +84,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'Reclamation corridor near sub-sea level outlets',
 		coordinate: [10.3121, 123.9184],
 		category: 'commercial',
-		icon: '🛍️'
+		icon: 'shopping'
 	},
 	{
 		id: 'mandaue_as_fortuna',
@@ -91,7 +92,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'Commercial arterial known for heavy rain flooding',
 		coordinate: [10.3392, 123.9275],
 		category: 'flood_prone',
-		icon: '🌊'
+		icon: 'waves'
 	},
 	{
 		id: 'cebu_ayala',
@@ -99,7 +100,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'Central Business Park',
 		coordinate: [10.3177, 123.9054],
 		category: 'commercial',
-		icon: '🛍️'
+		icon: 'shopping'
 	},
 	{
 		id: 'sm_seaside_cebu',
@@ -107,7 +108,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'South Road Properties (SRP), Mambaling',
 		coordinate: [10.2818, 123.8812],
 		category: 'commercial',
-		icon: '🛍️'
+		icon: 'shopping'
 	},
 	{
 		id: 'cebu_robinsons_galleria',
@@ -115,7 +116,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'General Maxilom Ave Extension, Tejero',
 		coordinate: [10.3065, 123.9103],
 		category: 'commercial',
-		icon: '🛍️'
+		icon: 'shopping'
 	},
 	{
 		id: 'cebu_emall',
@@ -123,7 +124,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'Leon Kilat Street, Sambag I, Cebu City',
 		coordinate: [10.2995, 123.8967],
 		category: 'transit',
-		icon: '🕒'
+		icon: 'clock'
 	},
 	{
 		id: 'cebu_doc_hospital',
@@ -131,7 +132,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'Osmeña Blvd, Capitol Site',
 		coordinate: [10.3142, 123.8913],
 		category: 'health',
-		icon: '🏥'
+		icon: 'hospital'
 	},
 	{
 		id: 'usc_talamban',
@@ -139,7 +140,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'Gov. M. Cuenco Ave, Nasipit, Talamban',
 		coordinate: [10.3541, 123.9135],
 		category: 'popular',
-		icon: '🎓'
+		icon: 'school'
 	},
 	{
 		id: 'carbon_market',
@@ -147,7 +148,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'M.C. Briones St, Downtown Waterfront',
 		coordinate: [10.2917, 123.8988],
 		category: 'popular',
-		icon: '🏪'
+		icon: 'store'
 	},
 	{
 		id: 'mctan_airport',
@@ -155,7 +156,7 @@ export const PRESET_DESTINATIONS: LocationPreset[] = [
 		shortDescription: 'Airport Road, Lapu-Lapu City',
 		coordinate: [10.3075, 123.9792],
 		category: 'transit',
-		icon: '✈️'
+		icon: 'plane'
 	}
 ];
 

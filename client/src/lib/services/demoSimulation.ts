@@ -1,3 +1,4 @@
+import type { IconName } from '$lib/utils/icons';
 import type { Coordinate, FloodHazardZone, VehicleCategoryId } from '../types/navigation';
 import type { Conditions, SimulationZone } from '../types/demo';
 import type { RoadRoute } from './routingService';
@@ -6,7 +7,7 @@ import { cumulativeDistances, positionAt, intersectsFlood } from './routingServi
 // Illustrative profiles applied to driving estimates, not measured vehicle speeds.
 export const VEHICLE_TRAVEL_PROFILES: Record<
 	VehicleCategoryId,
-	{ label: string; icon: string; factor: number }
+	{ label: string; icon: IconName; factor: number }
 > = {
 	low_clearance: { label: 'Car', icon: 'car', factor: 1 },
 	medium_clearance: { label: 'SUV', icon: 'suv', factor: 1.08 },

@@ -122,8 +122,11 @@
 	);
 </script>
 
-<section class="notice space-y-3" aria-label="Rainfall and research settings">
-	<h2 class="font-bold text-sky-200">Rainfall + MGB susceptibility</h2>
+<section
+	class="notice alert block space-y-3 alert-soft"
+	aria-label="Rainfall and research settings"
+>
+	<h2 class="font-bold text-primary">Rainfall + MGB susceptibility</h2>
 	<p class="text-xs">
 		Experimental exposure ranking, not a flood-depth prediction or road-safety assessment. Current
 		rain and 3-hour forecasts have different time resolution.
@@ -136,7 +139,7 @@
 			checked={loggingEnabled}
 			disabled={!ready}
 			onchange={(event) => toggle(event.currentTarget.checked)}
-			class="h-5 w-5 accent-sky-400"
+			class="checkbox h-5 w-5 checkbox-primary accent-primary"
 		/>
 		Research data logging
 	</label>
@@ -154,13 +157,13 @@
 		<p class="text-xs">
 			Check the server Supabase credential and research migration. Route display remains available.
 		</p>
-		<button onclick={() => saveRetry++} disabled={loading}>Retry research save</button>
+		<button class="btn" onclick={() => saveRetry++} disabled={loading}>Retry research save</button>
 	{/if}
 	{#if storageNotice}<p role="status">{storageNotice}</p>{/if}
-	<p class="text-xs text-slate-400">
+	<p class="text-xs text-base-content/70">
 		This browser only. Disabling keeps existing records; a save already in progress may finish.
 	</p>
-	<button onclick={() => refresh++} disabled={loading}
+	<button class="btn" onclick={() => refresh++} disabled={loading}
 		>{loading ? 'Checking weather and susceptibility…' : 'Refresh weather assessment'}</button
 	>
 	{#if error}<p role="alert">Assessment unavailable. {error}</p>{/if}

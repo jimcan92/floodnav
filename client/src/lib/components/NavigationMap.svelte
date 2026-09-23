@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { createMapMarker } from '$lib/utils/mapMarker';
 	import { onMount } from 'svelte';
 	import type * as Leaflet from 'leaflet';
 	import 'leaflet/dist/leaflet.css';
@@ -41,7 +42,7 @@
 	let L: typeof Leaflet;
 	let map: Leaflet.Map | undefined;
 	let group: Leaflet.LayerGroup;
-	let car: Leaflet.CircleMarker;
+	let car: Leaflet.Marker;
 	let ready = $state(false),
 		tileError = $state(false),
 		layer = $state<MapLayer>('Hybrid');
@@ -49,6 +50,7 @@
 	onMount(() => {
 		let disposed = false;
 		let resize: ResizeObserver;
+		let traveler: ReturnType<typeof createMapMarker> | undefined;
 		void import('leaflet').then((module) => {
 			if (disposed) return;
 			L = module;
@@ -83,13 +85,16 @@
 			});
 			map.on('click', (e: Leaflet.LeafletMouseEvent) => onMapClick?.([e.latlng.lat, e.latlng.lng]));
 			group = L.layerGroup().addTo(map);
-			car = L.circleMarker(origin, {
-				radius: 9,
-				color: '#fff',
-				weight: 3,
-				fillColor: '#2563eb',
-				fillOpacity: 1,
-				interactive: false
+			traveler = createMapMarker('car', 'traveler');
+			car = L.marker(origin, {
+				icon: L.divIcon({
+					className: 'traveler-marker',
+					html: traveler.element,
+					iconSize: [34, 34],
+					iconAnchor: [17, 17]
+				}),
+				interactive: false,
+				zIndexOffset: 1000
 			}).addTo(map);
 			car.bindTooltip('Simulated vehicle');
 			resize = new ResizeObserver(() => map?.invalidateSize());
@@ -100,12 +105,14 @@
 			disposed = true;
 			resize?.disconnect();
 			map?.remove();
+			traveler?.destroy();
 			map = undefined;
 		};
 	});
 	$effect(() => {
 		if (!ready || !map) return;
 		group.clearLayers();
+		const markers: ReturnType<typeof createMapMarker>[] = [];
 		const colors = { LF: '#c4b5fd', MF: '#a78bfa', HF: '#7c3aed', VHF: '#312e81' };
 		for (const feature of hazardFeatures) {
 			L.geoJSON(feature as GeoJSON.Feature, {
@@ -130,18 +137,23 @@
 					`OpenWeather sample: ${sample.rainMmH} mm/h · ${new Date(sample.observedAt).toLocaleString()} · grid center, not street-level`
 				);
 		}
-		const marker = (point: Coordinate, label: string, color: string) =>
-			L.circleMarker(point, {
-				radius: 8,
-				color: '#fff',
-				fillColor: color,
-				fillOpacity: 1,
+		const marker = (point: Coordinate, label: string, kind: 'origin' | 'destination') => {
+			const glyph = createMapMarker(kind === 'origin' ? 'circle' : 'pin', kind);
+			markers.push(glyph);
+			L.marker(point, {
+				icon: L.divIcon({
+					className: 'waypoint-marker',
+					html: glyph.element,
+					iconSize: [28, 28],
+					iconAnchor: [14, 14]
+				}),
 				bubblingMouseEvents: false
 			})
 				.addTo(group)
 				.bindTooltip(label, { permanent: true, direction: 'top' });
-		marker(origin, 'A · Origin', '#059669');
-		marker(destination, 'B · Destination', '#dc2626');
+		};
+		marker(origin, 'A · Origin', 'origin');
+		marker(destination, 'B · Destination', 'destination');
 		floodZones
 			.filter((z) => z.active)
 			.forEach((zone) => {
@@ -195,7 +207,7 @@
 					.bindTooltip(`Simulated ${dot.level} traffic`)
 			);
 		}
-		car.bringToFront();
+		return () => markers.forEach((marker) => marker.destroy());
 	});
 	$effect(() => {
 		if (ready) car.setLatLng(vehiclePosition);
@@ -204,13 +216,19 @@
 
 <div class="relative h-full min-h-[360px]" data-map-layer={layer}>
 	<div bind:this={container} class="h-full min-h-[360px]"></div>
-	<div class="map-caption">
+	<div
+		class="map-caption absolute bottom-6 left-2 z-[400] badge h-auto max-w-[80%] bg-base-100 p-2 text-xs"
+	>
 		{layer} · {floodSource === 'rainfall'
 			? 'MGB susceptibility + OpenWeather samples'
 			: `Floods: ${floodSource}`} · Traffic: simulated
 	</div>
-	{#if tileError}<div role="status" class="map-error">
+	{#if tileError}<div
+			role="status"
+			class="map-error absolute inset-x-3 bottom-14 z-[450] alert alert-warning"
+		>
 			Google map tiles unavailable. Routes and demo controls remain available.<button
+				class="btn"
 				onclick={() => {
 					tileError = false;
 					map?.eachLayer((l) => {

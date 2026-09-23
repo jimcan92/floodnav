@@ -13,7 +13,7 @@ export const layout = $state({
 	panelTrigger: null as HTMLElement | null
 });
 
-export const drawerOpen = $derived(
+const drawerOpen = $derived(
 	layout.mobile ? layout.mobilePanel === 'configuration' : layout.desktopDrawerOpen
 );
 
@@ -29,7 +29,8 @@ export async function setMobilePanel(panel: MobilePanel, restoreFocus = false) {
 			? layout.panelTrigger
 			: document.querySelector<HTMLElement>('.mobile-sheet-summary, .notification-toggle');
 		target?.focus();
-	} else if (panel === 'notifications') document.getElementById('mobile-notification-title')?.focus();
+	} else if (panel === 'notifications')
+		document.getElementById('mobile-notification-title')?.focus();
 	else if (panel === 'configuration')
 		document.querySelector<HTMLButtonElement>('.configuration-close button')?.focus();
 }
@@ -87,3 +88,9 @@ export function bindLayoutMedia() {
 		document.removeEventListener('pointerdown', outside);
 	};
 }
+
+export const layoutView = {
+	get drawerOpen() {
+		return drawerOpen;
+	}
+};

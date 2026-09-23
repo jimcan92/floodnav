@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { createMapMarker } from '$lib/utils/mapMarker';
 	import { observationTime } from '$lib/services/observedFlood';
 	import type { RoadRoute } from '$lib/services/routingService';
 	import type { SimulationZone } from '$lib/types/demo';
@@ -8,7 +9,7 @@
 	import type * as Leaflet from 'leaflet';
 	import 'leaflet/dist/leaflet.css';
 	import { onMount } from 'svelte';
-	import Icon from './Icon.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	let {
 		origin,
 		destination,
@@ -78,6 +79,7 @@
 	onMount(() => {
 		let disposed = false;
 		let resize: ResizeObserver;
+		let traveler: ReturnType<typeof createMapMarker> | undefined;
 		void import('leaflet').then((module) => {
 			if (disposed) return;
 			L = module;
@@ -105,12 +107,13 @@
 				onbounds?.([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
 			});
 			group = L.layerGroup().addTo(map);
+			traveler = createMapMarker('navigation', 'traveler');
 			car = L.marker(position, {
 				interactive: false,
 				zIndexOffset: 1000,
 				icon: L.divIcon({
 					className: 'traveler-marker',
-					html: '<span>➤</span>',
+					html: traveler.element,
 					iconSize: [34, 34],
 					iconAnchor: [17, 17]
 				})
@@ -126,6 +129,7 @@
 			disposed = true;
 			resize?.disconnect();
 			map?.remove();
+			traveler?.destroy();
 		};
 	});
 	$effect(() => {
@@ -137,6 +141,7 @@
 	$effect(() => {
 		if (!ready) return;
 		group.clearLayers();
+		const markers: ReturnType<typeof createMapMarker>[] = [];
 		if (assessment && showSusceptibility)
 			for (const feature of assessment.hazards.features)
 				L.geoJSON(feature as GeoJSON.Feature, {
@@ -201,14 +206,16 @@
 			L.polyline(route.polyline, { color: '#fff', weight: 10, interactive: false }).addTo(group);
 			L.polyline(route.polyline, { color: '#2875e7', weight: 6, interactive: false }).addTo(group);
 		}
-		for (const [point, text, color] of [
-			[origin, 'A', '#4285f4'],
-			[destination, 'B', '#ea4335']
-		] as [Coordinate, string, string][]) {
+		for (const [point, kind] of [
+			[origin, 'origin'],
+			[destination, 'destination']
+		] as const) {
+			const marker = createMapMarker(kind === 'origin' ? 'circle' : 'pin', kind);
+			markers.push(marker);
 			L.marker(point, {
 				icon: L.divIcon({
 					className: 'waypoint-marker',
-					html: `<span style="background:${color}">${text}</span>`,
+					html: marker.element,
 					iconSize: [28, 28],
 					iconAnchor: [14, 14]
 				}),
@@ -222,6 +229,7 @@
 			fitted = key;
 			fit();
 		}
+		return () => markers.forEach((marker) => marker.destroy());
 	});
 	$effect(() => {
 		if (ready) {
@@ -303,19 +311,31 @@
 			aria-expanded={layerOpen}><Icon name="layers" size={18} />{layer}</button
 		>{#if layerOpen}<div class="layer-options">
 				{#each ['Streets', 'Satellite', 'Hybrid'] as name}<button
+						class="btn"
 						class:active={name === layer}
 						onclick={() => changeLayer(name)}>{name}</button
 					>{/each}
-				<label><input type="checkbox" bind:checked={showObserved} /> Satellite observations</label>
-				<label
-					><input type="checkbox" bind:checked={showSusceptibility} /> Flood susceptibility</label
+				<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
+					><input class="checkbox checkbox-primary" type="checkbox" bind:checked={showObserved} /> Satellite
+					observations</label
 				>
-				<label><input type="checkbox" bind:checked={showSimulation} /> Simulation areas</label>
+				<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
+					><input
+						class="checkbox checkbox-primary"
+						type="checkbox"
+						bind:checked={showSusceptibility}
+					/> Flood susceptibility</label
+				>
+				<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
+					><input class="checkbox checkbox-primary" type="checkbox" bind:checked={showSimulation} /> Simulation
+					areas</label
+				>
 			</div>{/if}
 	</div>
 {/if}
 {#if tileError && !offline}<div class="tile-notice">
 		Map tiles unavailable. Travel controls still work.<button
+			class="btn"
 			onclick={() => {
 				tileError = false;
 				bases[layer]?.redraw();

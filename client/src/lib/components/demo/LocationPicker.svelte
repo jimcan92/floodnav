@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { PRESET_DESTINATIONS, PRESET_ORIGINS } from '$lib/data/mockFloodData';
 	import type { Waypoint } from '$lib/types/demo';
-	import Icon from './Icon.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	let {
 		label,
 		value,
@@ -59,7 +59,7 @@
 </script>
 
 <div class="location-field form-control relative mb-3">
-	<label
+	<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
 		><span>{label}</span>
 		<div class="location-input join w-full">
 			<input
@@ -101,37 +101,42 @@
 		</div></label
 	>
 	{#if open && !disabled}
-		<div class="location-results">
+		<div
+			class="location-results menu absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-box bg-base-100 p-2 shadow-xl"
+		>
 			<div class="result-heading">
 				<span>Choose a place</span><button
-					class="icon-button"
+					class="icon-button btn btn-square btn-ghost btn-sm"
 					aria-label="Close location picker"
 					onclick={() => (open = false)}><Icon name="close" size={16} /></button
 				>
 			</div>
 			<button
-				class="location-result"
+				class="location-result btn flex items-center gap-2 rounded-lg px-2 py-2 text-left"
 				onclick={() => {
 					open = false;
 					onpick();
 				}}><Icon name="pin" /><span>Choose on map</span></button
 			>
 			{#if ongps}<button
-					class="location-result"
+					class="location-result btn flex items-center gap-2 rounded-lg px-2 py-2 text-left"
 					onclick={() => {
 						open = false;
 						ongps();
 					}}><Icon name="target" /><span>Use my location</span></button
 				>{/if}
-			{#each suggestions as p}<button class="location-result" onclick={() => choose(p)}
+			{#each suggestions as p}<button
+					class="location-result btn flex items-center gap-2 rounded-lg px-2 py-2 text-left"
+					onclick={() => choose(p)}
 					><Icon name="pin" size={17} /><span>{p.name}<small>{p.shortDescription}</small></span
 					></button
 				>{/each}
-			{#if query.length >= 3}<button class="search-online" disabled={busy} onclick={search}
+			{#if query.length >= 3}<button class="search-online btn" disabled={busy} onclick={search}
 					>{busy ? 'Searching…' : `Search online for “${query}”`}</button
 				>{/if}
-			{#each results as p}<button class="location-result" onclick={() => choose(p)}
-					><Icon name="search" size={17} /><span>{p.name}</span></button
+			{#each results as p}<button
+					class="location-result btn flex items-center gap-2 rounded-lg px-2 py-2 text-left"
+					onclick={() => choose(p)}><Icon name="search" size={17} /><span>{p.name}</span></button
 				>{/each}
 			{#if error}<p class="field-error" role="status">{error}</p>{/if}
 			<small class="search-credit"

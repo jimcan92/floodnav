@@ -1,17 +1,7 @@
 <script lang="ts">
 	import { formatTravelTime } from '$lib/services/demoSimulation';
-	import {
-		arrived,
-		blocked,
-		demo,
-		editable,
-		gpsTravel,
-		liveUnavailable,
-		remainingMeters,
-		remainingSeconds,
-		status
-	} from '$lib/states/demo.svelte';
-	import Icon from './Icon.svelte';
+	import { demo, navigation } from '$lib/states/demo.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let {
 		onToggleMute,
@@ -23,7 +13,10 @@
 		onStop: () => void;
 	} = $props();
 
-	const canResume = $derived(editable && (gpsTravel || (!blocked && !demo.busy && !liveUnavailable)));
+	const canResume = $derived(
+		navigation.editable &&
+			(navigation.gpsTravel || (!navigation.blocked && !demo.busy && !navigation.liveUnavailable))
+	);
 </script>
 
 <section
@@ -32,20 +25,22 @@
 >
 	<div class="card-body p-4">
 		<strong
-			>{arrived
+			>{navigation.arrived
 				? 'Arrived'
-				: gpsTravel && (demo.offRoute || demo.busy || !!demo.gpsMessage || !demo.gpsAccuracy)
+				: navigation.gpsTravel &&
+					  (demo.offRoute || demo.busy || !!demo.gpsMessage || !demo.gpsAccuracy)
 					? 'Updating ETA…'
-					: blocked
+					: navigation.blocked
 						? 'Blocked — ETA unavailable'
-						: formatTravelTime(remainingSeconds)}</strong
+						: formatTravelTime(navigation.remainingSeconds)}</strong
 		>
 		<span
-			>{(remainingMeters / 1000).toFixed(1)} km remaining <span class="trip-separator">·</span>
-			{status}</span
+			>{(navigation.remainingMeters / 1000).toFixed(1)} km remaining
+			<span class="trip-separator">·</span>
+			{navigation.status}</span
 		>
 		<small
-			>{((demo.completedMeters + demo.progress) / 1000).toFixed(2)} km traveled · {gpsTravel
+			>{((demo.completedMeters + demo.progress) / 1000).toFixed(2)} km traveled · {navigation.gpsTravel
 				? `Live GPS · ±${Math.round(demo.gpsAccuracy)} m`
 				: `${demo.playbackSpeed}× playback`}</small
 		>
@@ -58,11 +53,15 @@
 			onclick={onToggleMute}><Icon name="sound" /></button
 		><button
 			class="primary-button btn btn-primary btn-sm"
-			disabled={arrived || !canResume}
+			disabled={navigation.arrived || !canResume}
 			onclick={onTogglePlaying}
-			><Icon name={demo.playing ? 'pause' : 'play'} size={17} />{demo.playing ? 'Pause' : 'Resume'}</button
-		><button class="icon-button btn btn-circle btn-ghost btn-sm" aria-label="End trip" onclick={onStop}
-			><Icon name="close" /></button
+			><Icon name={demo.playing ? 'pause' : 'play'} size={17} />{demo.playing
+				? 'Pause'
+				: 'Resume'}</button
+		><button
+			class="icon-button btn btn-circle btn-ghost btn-sm"
+			aria-label="End trip"
+			onclick={onStop}><Icon name="close" /></button
 		>
 	</div>
 </section>

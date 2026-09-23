@@ -64,11 +64,12 @@
 	}
 </script>
 
-<details bind:open={expanded} class="notice">
+<details bind:open={expanded} class="notice alert block alert-soft">
 	<summary class="cursor-pointer font-semibold">Supabase connection</summary>
 	<form onsubmit={connect} class="mt-3 space-y-3">
-		<label
+		<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
 			>Project URL<input
+				class="input w-full"
 				aria-label="Supabase project URL"
 				type="url"
 				required
@@ -77,8 +78,9 @@
 				placeholder="https://your-project.supabase.co"
 			/></label
 		>
-		<label
+		<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
 			>Publishable key<input
+				class="input w-full"
 				aria-label="Supabase publishable key"
 				type="password"
 				required
@@ -92,10 +94,11 @@
 			Public key only. Requires the FloodNav tables and latest_flood_readings view. No service-role
 			or device tokens here.
 		</p>
-		<button type="submit" disabled={busy}
+		<button class="btn" type="submit" disabled={busy}
 			>{busy ? 'Testing connection…' : 'Test and save connection'}</button
 		>
 		<button
+			class="btn"
 			type="button"
 			disabled={busy}
 			onclick={() => {

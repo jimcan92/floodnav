@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from '$lib/components/Icon.svelte';
 	import { onMount } from 'svelte';
 	import { dev, version } from '$app/environment';
 	import { pwaState } from '$lib/services/pwaState.svelte';
@@ -136,150 +137,54 @@
 </svelte:head>
 
 {#if waiting || changedController}
-	<aside class="pwa-update" role="status" aria-label="App update">
+	<aside
+		class="pwa-update fixed bottom-4 left-1/2 z-[2200] alert grid w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 gap-2 shadow-xl"
+		role="status"
+		aria-label="App update"
+	>
 		<strong>Update available</strong>
 		<span
 			>{pwaState.busy
 				? 'Updating will end your trip and discard unsaved edits.'
 				: 'A new FloodNav version is ready.'}</span
 		>
-		<button onclick={updateNow} disabled={!pwaState.online}>Update now</button>
+		<button class="btn" onclick={updateNow} disabled={!pwaState.online}>Update now</button>
 	</aside>
 {/if}
 {#if installPrompt}<button
-		class="pwa-install"
+		class="pwa-install btn fixed top-3 right-3 z-[1400] shadow btn-sm"
 		onclick={async () => {
 			await installPrompt?.prompt();
 			installPrompt = null;
 		}}>Install FloodNav</button
 	>{/if}
-{#if updateError}<p class="pwa-error" role="status">{updateError}</p>{/if}
-<dialog bind:this={offlineDialog} class="pwa-offline" aria-labelledby="offline-title">
-	<span class="offline-icon" aria-hidden="true">↯</span>
-	<h2 id="offline-title">You’re offline</h2>
-	<p>
-		Internet is needed for map tiles, live traffic and rainfall, place search, and shared changes.
-	</p>
-	<p>
-		You can still simulate the bundled Fuente → SM City trip with a route diagram, vehicle
-		estimates, speed controls, and local flood scenarios. Offline changes stay on this device.
-	</p>
-	{#if !offlineReady}<p class="offline-hint">
-			Open the installed app online once to prepare it for future offline launches.
-		</p>{/if}
-	<button class="offline-primary" onclick={offlineDemo}>Start offline demo</button>
-	<button class="offline-secondary" onclick={() => offlineDialog.close()}
-		>Stay on this screen</button
+{#if updateError}<p
+		class="pwa-error fixed right-3 bottom-2 z-[2200] alert max-w-[min(340px,calc(100vw-1.5rem))] text-xs alert-warning"
+		role="status"
 	>
+		{updateError}
+	</p>{/if}
+<dialog bind:this={offlineDialog} class="pwa-offline modal" aria-labelledby="offline-title">
+	<div class="modal-box space-y-4">
+		<span class="offline-icon rounded-box bg-primary/10 p-2 text-primary" aria-hidden="true"
+			><Icon name="offline" /></span
+		>
+		<h2 id="offline-title">You’re offline</h2>
+		<p>
+			Internet is needed for map tiles, live traffic and rainfall, place search, and shared changes.
+		</p>
+		<p>
+			You can still simulate the bundled Fuente → SM City trip with a route diagram, vehicle
+			estimates, speed controls, and local flood scenarios. Offline changes stay on this device.
+		</p>
+		{#if !offlineReady}<p class="offline-hint text-xs text-base-content/70">
+				Open the installed app online once to prepare it for future offline launches.
+			</p>{/if}
+		<button class="offline-primary btn w-full btn-primary" onclick={offlineDemo}
+			>Start offline demo</button
+		>
+		<button class="offline-secondary btn w-full btn-outline" onclick={() => offlineDialog.close()}
+			>Stay on this screen</button
+		>
+	</div>
 </dialog>
-
-<style>
-	.pwa-update {
-		position: fixed;
-		z-index: 2200;
-		bottom: 18px;
-		left: 50%;
-		transform: translateX(-50%);
-		width: min(420px, calc(100vw - 32px));
-		padding: 16px;
-		border: 1px solid #bce8ef;
-		border-radius: 16px;
-		background: #fff;
-		color: #173047;
-		box-shadow: 0 8px 35px #15304730;
-		display: grid;
-		gap: 8px;
-		font-size: 13px;
-	}
-	.pwa-update button,
-	.offline-primary {
-		background: #087e96;
-		color: white;
-		border: 0;
-		border-radius: 10px;
-		padding: 11px 16px;
-		cursor: pointer;
-		font-weight: 600;
-	}
-	.pwa-update button:disabled {
-		opacity: 0.5;
-	}
-	.pwa-install {
-		position: fixed;
-		z-index: 1400;
-		top: 12px;
-		right: 12px;
-		border: 1px solid #c6e7ed;
-		border-radius: 20px;
-		background: #fff;
-		color: #075b70;
-		padding: 9px 14px;
-		font-size: 12px;
-		cursor: pointer;
-		box-shadow: 0 3px 15px #15304715;
-	}
-	.pwa-error {
-		position: fixed;
-		z-index: 2200;
-		bottom: 8px;
-		right: 12px;
-		max-width: min(340px, calc(100vw - 24px));
-		border-radius: 10px;
-		padding: 10px;
-		background: #fff;
-		color: #6b4e24;
-		font-size: 12px;
-	}
-	.pwa-offline {
-		width: min(420px, calc(100vw - 32px));
-		max-height: calc(100dvh - 40px);
-		overflow: auto;
-		border: 1px solid #d8e8ec;
-		border-radius: 22px;
-		padding: 26px;
-		margin: auto;
-		background: #fff;
-		color: #173047;
-		box-shadow: 0 18px 70px #15304740;
-	}
-	.pwa-offline::backdrop {
-		background: #152b45a6;
-		backdrop-filter: blur(4px);
-	}
-	.offline-icon {
-		display: grid;
-		place-items: center;
-		width: 44px;
-		height: 44px;
-		background: #e1f3f5;
-		color: #087e96;
-		font-size: 28px;
-		border-radius: 14px;
-	}
-	.pwa-offline h2 {
-		margin: 18px 0 12px;
-		font-size: 24px;
-		font-weight: 700;
-	}
-	.pwa-offline p {
-		font-size: 14px;
-		line-height: 1.6;
-		margin: 12px 0;
-		color: #52667c;
-	}
-	.pwa-offline .offline-hint {
-		font-size: 12px;
-	}
-	.pwa-offline button {
-		width: 100%;
-		margin-top: 10px;
-	}
-	.offline-secondary {
-		border: 1px solid #d8e8ec;
-		background: white;
-		color: #52667c;
-		border-radius: 10px;
-		padding: 11px;
-		cursor: pointer;
-	}
-</style>

@@ -1,38 +1,28 @@
 <script lang="ts">
 	import { formatTravelTime } from '$lib/services/demoSimulation';
+	import { pwaState } from '$lib/services/pwaState.svelte';
+	import {
+		alternative,
+		alternativeEvaluation,
+		blocked,
+		canAvoidObserved,
+		demo,
+		editable,
+		floodSimulation,
+		gpsTravel,
+		mainError,
+		observedEncounters,
+		ownRoad,
+		providerMessage,
+		remainingSeconds,
+		trafficSimulation
+	} from '$lib/states/demo.svelte';
+	import { floods } from '$lib/states/floods.svelte';
+	import { layout } from '$lib/states/layout.svelte';
 	import type { RoadRoute } from '$lib/services/routingService';
-	import type { ObservedFloodFeature, ObservedFloods } from '$lib/types/observedFlood';
 	import Icon from './Icon.svelte';
 
 	let {
-		mobile,
-		mobilePanel,
-		notificationCount,
-		trafficSimulation,
-		floodSimulation,
-		offlineDemo,
-		connected,
-		syncError,
-		mainError,
-		hasCustomError,
-		observed,
-		observedLoading,
-		online,
-		observedEncounters,
-		canAvoidObserved,
-		rerouting,
-		blocked,
-		gpsTravel,
-		started,
-		gpsMessage,
-		liveTrafficFallback,
-		hasShared,
-		remainingSeconds,
-		editable,
-		alternative,
-		alternativeEvaluation,
-		providerMessage,
-		notice,
 		onClose,
 		onRetrySync,
 		onRetry,
@@ -43,34 +33,6 @@
 		onAcceptAlternative,
 		onDismissNotice
 	}: {
-		mobile: boolean;
-		mobilePanel: 'controls' | 'notifications' | 'configuration' | null;
-		notificationCount: number;
-		trafficSimulation: boolean;
-		floodSimulation: boolean;
-		offlineDemo: boolean;
-		connected: boolean;
-		syncError: string;
-		mainError: string;
-		hasCustomError: boolean;
-		observed: ObservedFloods | null;
-		observedLoading: boolean;
-		online: boolean;
-		observedEncounters: ObservedFloodFeature[];
-		canAvoidObserved: boolean;
-		rerouting: boolean;
-		blocked: boolean;
-		gpsTravel: boolean;
-		started: boolean;
-		gpsMessage: string;
-		liveTrafficFallback: boolean;
-		hasShared: boolean;
-		remainingSeconds: number;
-		editable: boolean;
-		alternative: RoadRoute | null;
-		alternativeEvaluation: { seconds: number; blocked: boolean } | null;
-		providerMessage: string;
-		notice: string;
 		onClose: () => void;
 		onRetrySync: () => void;
 		onRetry: () => void;
@@ -87,19 +49,17 @@
 	class="demo-alerts fixed right-4 bottom-4 z-[700] flex max-h-[calc(100dvh-2rem)] w-[min(420px,calc(100vw-2rem))] flex-col gap-2 overflow-auto"
 	id="mobile-notifications"
 	aria-label="Notifications"
-	aria-live={mobile ? 'off' : 'polite'}
+	aria-live={layout.mobile ? 'off' : 'polite'}
 >
-	<div
-		class="mobile-notification-heading flex items-start justify-between rounded-box bg-base-100 p-4 shadow"
-	>
+	<div class="mobile-notification-heading flex items-start justify-between rounded-box bg-base-100 p-4 shadow">
 		<div>
 			<h2 id="mobile-notification-title" tabindex="-1">Notifications</h2>
 			<small
 				>{trafficSimulation ? 'Simulated traffic' : 'Live traffic'} · {floodSimulation
 					? 'Simulated flooding'
-					: 'Live rainfall'}<br />{offlineDemo
+					: 'Live rainfall'}<br />{demo.offlineDemo
 					? 'Local offline demo'
-					: connected
+					: demo.connected
 						? 'Shared conditions connected'
 						: 'Shared conditions disconnected'}</small
 			>
@@ -109,68 +69,67 @@
 		</button>
 	</div>
 
-	{#if syncError && !offlineDemo}
-		<div class="alert alert-error" role="alert">
-			{syncError}<button class="btn btn-sm" onclick={onRetrySync}>Retry synchronization</button>
+	{#if demo.syncError && !demo.offlineDemo}
+		<div class="error-banner alert alert-error" role="alert">
+			{demo.syncError}<button class="btn btn-sm" onclick={onRetrySync}>Retry synchronization</button>
 		</div>
 	{/if}
 	{#if mainError}
-		<div class="alert alert-error" role="alert">
-			{mainError}{#if !hasCustomError}<button class="btn btn-sm" onclick={onRetry}>Retry</button
-				>{/if}
+		<div class="error-banner alert alert-error" role="alert">
+			{mainError}{#if !demo.error}<button class="btn btn-sm" onclick={onRetry}>Retry</button>{/if}
 		</div>
 	{/if}
-	{#if observed?.stale || observed?.status === 'unavailable'}
-		<div class="alert alert-error">
+	{#if floods.data?.stale || floods.data?.status === 'unavailable'}
+		<div class="error-banner alert alert-error">
 			<span
-				>Satellite provider unavailable. {observed?.fetchedAt
+				>Satellite provider unavailable. {floods.data?.fetchedAt
 					? 'Showing dated cached observations.'
 					: 'Flood conditions remain unknown.'}</span
 			>
 			<button
 				class="btn btn-sm"
-				disabled={observedLoading || !online || offlineDemo}
+				disabled={floods.loading || !pwaState.online || demo.offlineDemo}
 				onclick={onRetryObserved}>Retry satellite data</button
 			>
 		</div>
 	{/if}
 	{#if observedEncounters.length}
-		<div class="alert items-start alert-warning">
+		<div class="warning-banner alert items-start alert-warning">
 			<Icon name="rain" />
 			<div>
 				<strong>Satellite-observed flooding intersects this route</strong>
 				<p>Recent observation, not a confirmed road closure. Check local conditions.</p>
 				{#if canAvoidObserved}<button
 						class="btn btn-sm"
-						disabled={rerouting}
+						disabled={demo.rerouting}
 						onclick={onFindObservedAlternative}
-						>{rerouting ? 'Checking roads…' : 'Find alternative around observed flooding'}</button
+						>{demo.rerouting ? 'Checking roads…' : 'Find alternative around observed flooding'}</button
 					>{/if}
 			</div>
 		</div>
 	{/if}
 	{#if blocked}
-		<div class="alert items-start alert-warning">
+		<div class="warning-banner alert items-start alert-warning">
 			<Icon name="rain" />
 			<div>
 				<strong>{gpsTravel ? 'Simulated flood ahead' : 'Flood ahead. Travel paused.'}</strong>
 				<p>A simulated flood blocks the remaining route.</p>
-				<button class="btn btn-sm" disabled={rerouting || !editable} onclick={onFindAlternative}
-					>{rerouting ? 'Checking roads…' : 'Find alternative from here'}</button
+				<button class="btn btn-sm" disabled={demo.rerouting || !editable} onclick={onFindAlternative}
+					>{demo.rerouting ? 'Checking roads…' : 'Find alternative from here'}</button
 				>
 			</div>
 		</div>
 	{/if}
-	{#if offlineDemo}
-		<div class="alert alert-info">
-			<span>Offline route diagram · map tiles and live data need internet.</span>{#if online}<button
+	{#if demo.offlineDemo}
+		<div class="info-banner alert alert-info">
+			<span>Offline route diagram · map tiles and live data need internet.</span>{#if pwaState.online}<button
 					class="btn btn-sm"
 					onclick={onExitOffline}>Return to shared live mode</button
 				>{/if}
 		</div>
 	{/if}
-	{#if !connected && hasShared && !offlineDemo}
-		<div class="alert alert-info">
+	{#if !demo.connected && demo.shared && !demo.offlineDemo}
+		<div class="info-banner alert alert-info">
 			Shared conditions disconnected. {gpsTravel
 				? 'GPS travel remains available.'
 				: 'Travel paused.'}<button class="btn btn-sm" onclick={onRetrySync}
@@ -178,16 +137,16 @@
 			>
 		</div>
 	{/if}
-	{#if !trafficSimulation && liveTrafficFallback}
-		<div class="alert alert-info">
+	{#if !trafficSimulation && ownRoad?.source === 'osrm'}
+		<div class="info-banner alert alert-info">
 			Live traffic unavailable · using basic road directions and estimated ETA.
 		</div>
 	{/if}
-	{#if started && gpsTravel && gpsMessage}<div class="alert alert-info" role="status">
-			{gpsMessage}
+	{#if demo.started && gpsTravel && demo.gpsMessage}<div class="info-banner alert alert-info" role="status">
+			{demo.gpsMessage}
 		</div>{/if}
 	{#if alternative && alternativeEvaluation}
-		<div class="alert justify-between alert-info">
+		<div class="alternative-banner info-banner alert justify-between alert-info">
 			<span
 				>{blocked
 					? 'Passable alternative'
@@ -200,19 +159,19 @@
 			>
 			<button
 				class="btn btn-sm"
-				disabled={!editable || rerouting}
+				disabled={!editable || demo.rerouting}
 				onclick={() => onAcceptAlternative(alternative)}>Use alternative</button
 			>
 		</div>
 	{/if}
-	{#if notice}
-		<div class="alert justify-between alert-info">
-			<span>{notice}</span><button
+	{#if demo.notice}
+		<div class="info-banner alert justify-between alert-info">
+			<span>{demo.notice}</span><button
 				class="btn btn-square btn-ghost btn-sm"
 				aria-label="Dismiss notice"
 				onclick={onDismissNotice}><Icon name="close" size={16} /></button
 			>
 		</div>
 	{/if}
-	{#if providerMessage}<div class="alert alert-info">{providerMessage}</div>{/if}
+	{#if providerMessage}<div class="info-banner alert alert-info">{providerMessage}</div>{/if}
 </div>

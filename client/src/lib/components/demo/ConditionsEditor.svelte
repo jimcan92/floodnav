@@ -4,6 +4,7 @@
 	import { demoId } from '$lib/services/demoId';
 	import type { Conditions, SimulationState, SimulationZone } from '$lib/types/demo';
 	import type { Coordinate, DemoScenario } from '$lib/types/navigation';
+	import { cloneJson } from '$lib/utils/clone';
 	let {
 		simulation,
 		localOnly = false,
@@ -23,7 +24,7 @@
 		onpreview: (zones: SimulationZone[] | null) => void;
 		onapply: (conditions: Conditions, revision: number, preset?: DemoScenario) => Promise<boolean>;
 	} = $props();
-	const clone = (value: Conditions): Conditions => JSON.parse(JSON.stringify(value));
+	const clone = (value: Conditions): Conditions => cloneJson(value);
 	let draft = $state<Conditions>(untrack(() => clone(simulation.conditions))),
 		version = $state(untrack(() => simulation.revision)),
 		dirty = $state(false),
@@ -133,11 +134,11 @@
 		</ul>
 		<button
 			type="button"
-			class="text-button"
+			class="text-button btn btn-ghost btn-sm"
 			onclick={() => {
 				version = simulation.revision;
 				message = 'Latest settings reviewed. Apply changes to publish your draft.';
-			}}>Keep my draft after review</button
+			}}>Keep my draft after review</button>
 		>
 	</div>
 {/if}
@@ -155,15 +156,14 @@
 				<h2>Traffic</h2>
 				<small>{draft.trafficSimulation ? 'Custom traffic areas' : 'Live · TomTom'}</small>
 			</div>
-			<label class="switch"
-				><input
-					type="checkbox"
-					aria-label="Traffic simulation"
-					disabled={localOnly}
-					bind:checked={draft.trafficSimulation}
-					onchange={changed}
-				/><span></span></label
-			>
+			<input
+				type="checkbox"
+				class="toggle toggle-primary"
+				aria-label="Traffic simulation"
+				disabled={localOnly}
+				bind:checked={draft.trafficSimulation}
+				onchange={changed}
+			/>
 		</div>
 		<div class="mode-note">
 			Simulation {draft.trafficSimulation ? 'on' : 'off'}
@@ -172,7 +172,7 @@
 		</div>
 		{#if draft.trafficSimulation}<button
 				type="button"
-				class="add-area"
+				class="add-area btn btn-outline btn-sm"
 				onclick={() => onpick('traffic')}><Icon name="plus" size={17} />Add traffic area</button
 			>{/if}
 	</section>
@@ -185,15 +185,14 @@
 					>{draft.floodSimulation ? 'Custom rainfall and depth' : 'Live · Rainfall + MGB'}</small
 				>
 			</div>
-			<label class="switch"
-				><input
-					type="checkbox"
-					aria-label="Rainfall/Flood simulation"
-					disabled={localOnly}
-					bind:checked={draft.floodSimulation}
-					onchange={changed}
-				/><span></span></label
-			>
+			<input
+				type="checkbox"
+				class="toggle toggle-primary"
+				aria-label="Rainfall/Flood simulation"
+				disabled={localOnly}
+				bind:checked={draft.floodSimulation}
+				onchange={changed}
+			/>
 		</div>
 		<div class="mode-note">
 			Simulation {draft.floodSimulation ? 'on' : 'off'}
@@ -205,7 +204,7 @@
 		</div>
 		{#if draft.floodSimulation}<button
 				type="button"
-				class="add-area"
+				class="add-area btn btn-outline btn-sm"
 				onclick={() => onpick('flood')}><Icon name="plus" size={17} />Add flood area</button
 			>{/if}
 	</section>
@@ -214,12 +213,12 @@
 			<h2>Scenario areas <span>{draft.zones.length}</span></h2>
 			{#if draft.zones.length}<button
 					type="button"
-					class="text-button"
+					class="text-button btn btn-ghost btn-xs"
 					onclick={() => {
 						draft.zones = [];
 						editing = null;
 						changed();
-					}}>Clear all</button
+					}}>Clear all</button>
 				>{/if}
 		</div>
 		{#if !draft.zones.length}<div class="empty-zones">
@@ -245,7 +244,7 @@
 					></button
 				><button
 					type="button"
-					class="icon-button"
+					class="icon-button btn btn-square btn-ghost btn-sm"
 					aria-label={`Delete ${z.name}`}
 					onclick={() => {
 						draft.zones = draft.zones.filter((v) => v.id !== z.id);

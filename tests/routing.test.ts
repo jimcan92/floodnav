@@ -3,6 +3,7 @@ import {
   cumulativeDistances,
   evaluateRoutes,
   fetchRoadRoutes,
+  fetchFloodDetours,
   intersectsFlood,
   parseRoadRoutes,
   positionAt,
@@ -187,5 +188,65 @@ describe("navigation state", () => {
     expect(positionAt(path, total + 10)).toEqual(path.at(-1));
     expect(advanceProgress(total - 5, 20, total)).toBe(total);
     expect(advanceProgress(100, 0, total)).toBe(100);
+  });
+});
+
+
+describe("flood-aware detour search", () => {
+  const origin: Coordinate = [0, -0.01], destination: Coordinate = [0, 0.01];
+  const blocked: Coordinate[] = [origin, destination];
+  const clear: Coordinate[] = [origin, [0.005, -0.01], [0.005, 0.01], destination];
+  function response(path: Coordinate[], duration = 100) {
+    return { ok: true, json: async () => ({ code: 'Ok', routes: [{
+      distance: 3000, duration, geometry: { coordinates: path.map(([lat, lng]) => [lng, lat]) },
+      legs: [{ steps: [{ distance: 3000, duration, name: 'Road',
+        maneuver: { type: 'depart', location: [origin[1], origin[0]] } },
+        { distance: 0, duration: 0, name: '', maneuver: { type: 'arrive', location: [destination[1], destination[0]] } }] }]
+    }] }) };
+  }
+  it('widens the search after blocked probes and returns real road geometry with unique keys', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response(blocked)).mockResolvedValueOnce(response(blocked))
+      .mockResolvedValue(response(clear));
+    vi.stubGlobal('fetch', fetcher);
+    const result = await fetchFloodDetours(origin, destination, blocked, [zone], new AbortController().signal);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(result).toHaveLength(1);
+    expect(result[0].polyline).toEqual(clear);
+    expect(result[0].key).toMatch(/^detour_/);
+    expect(result[0].source).toBe('osrm');
+    expect(result[0].steps.filter(step => step.maneuver === 'arrive')).toHaveLength(1);
+    for (const [url] of fetcher.mock.calls) {
+      expect(url.split('/driving/')[1].split('?')[0].split(';')).toHaveLength(3);
+      expect(url).toContain('waypoints=0;2');
+    }
+  });
+  it('checks all hazards, including one outside the original road', async () => {
+    const other = { ...zone, id: 'other', center: [0.005, 0] as Coordinate };
+    const fetcher = vi.fn().mockResolvedValue(response(clear));
+    vi.stubGlobal('fetch', fetcher);
+    expect(await fetchFloodDetours(origin, destination, blocked, [zone, other], new AbortController().signal)).toEqual([]);
+    expect(fetcher).toHaveBeenCalledTimes(6);
+  });
+  it('does not search when a trip endpoint is inside a blocking zone or there is no blockage', async () => {
+    const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+    expect(await fetchFloodDetours(origin, destination, blocked, [{ ...zone, center: origin }], new AbortController().signal)).toEqual([]);
+    expect(await fetchFloodDetours(origin, destination, blocked, [], new AbortController().signal)).toEqual([]);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it('keeps successful detours when another probe fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('Network')).mockResolvedValueOnce(response(clear)));
+    expect(await fetchFloodDetours(origin, destination, blocked, [zone], new AbortController().signal)).toHaveLength(1);
+  });
+  it('reports service failure distinctly from no passable road', async () => {
+    const fetcher = vi.fn().mockRejectedValue(new Error('Network')); vi.stubGlobal('fetch', fetcher);
+    await expect(fetchFloodDetours(origin, destination, blocked, [zone], new AbortController().signal)).rejects.toThrow('unavailable');
+    expect(fetcher).toHaveBeenCalledTimes(6);
+  });
+  it('does not publish results or start more rounds after cancellation', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn().mockImplementation(async () => { controller.abort(); return response(clear); });
+    vi.stubGlobal('fetch', fetcher);
+    await expect(fetchFloodDetours(origin, destination, blocked, [zone], controller.signal)).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

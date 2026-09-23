@@ -5,9 +5,13 @@
 	import { matchGpsToRoute, usableGpsFix } from '$lib/services/gpsNavigation';
 	import { haversineDistanceKm } from '$lib/services/trafficService';
 	import { VEHICLE_TRAVEL_PROFILES } from '$lib/services/demoSimulation';
-	import { onMount, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import Icon from './Icon.svelte';
 	import DemoMap from './DemoMap.svelte';
+	import RouteChoices from './RouteChoices.svelte';
+	import ConditionsSummary from './ConditionsSummary.svelte';
+	import { CEBU_BOUNDS, type Bounds, type ObservedFloods } from '$lib/types/observedFlood';
+	import { actionableObservedFloods, recentObservedFloods, intersectsObservedFlood } from '$lib/services/observedFlood';
 	import LocationPicker from './LocationPicker.svelte';
 	import ConditionsEditor from './ConditionsEditor.svelte';
 	import type { Conditions, SimulationState, SimulationZone, Waypoint } from '$lib/types/demo';
@@ -18,11 +22,13 @@
 	import {
 		cumulativeDistances,
 		fetchRoadRoutes,
+		fetchFloodDetours,
 		positionAt,
 		type RoadRoute
 	} from '$lib/services/routingService';
 	import {
 		advanceTimed,
+		floodZones,
 		remainingPath,
 		evaluateSimulation,
 		rankSimulationRoutes,
@@ -73,8 +79,7 @@
 	let playing = $state(false),
 		started = $state(false),
 		busy = $state(false),
-		muted = $state(false),
-		collapsed = $state(false);
+		muted = $state(false);
 	let notice = $state(''),
 		error = $state(''),
 		routeError = $state(''),
@@ -91,8 +96,73 @@
 	let candidates = $state<RoadRoute[]>([]),
 		previewZones = $state<SimulationZone[] | null>(null),
 		rerouting = $state(false),
-		drawerOpen = $state(false),
 		clock = $state(Date.now());
+	let mobile = $state(false);
+	let wide = $state(false);
+	let theme = $state<'dark'|'light'|'system'>('dark');
+	let systemDark = $state(false);
+	const resolvedTheme = $derived(theme === 'system' ? (systemDark ? 'dark' : 'light') : theme);
+	function changeTheme(value: string) {
+		if(value !== 'dark' && value !== 'light' && value !== 'system') return;
+		theme=value;
+		try { localStorage.setItem('floodnav-theme',value); } catch { /* Local preference is optional. */ }
+	}
+	let observed = $state<ObservedFloods|null>(null);
+	let observedLoading = $state(true);
+	let observedBounds = $state<Bounds>(CEBU_BOUNDS);
+	let observedRequest = $state(0);
+	$effect(()=> {
+		const bounds=observedBounds, request=observedRequest;
+		if(!mounted||!online||offlineDemo) {observedLoading=false;return;}
+		const controller=new AbortController();
+		const timer=setTimeout(async()=> {
+			observedLoading=true;
+			try {
+				const response=await fetch('/api/observed-floods',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bounds}),signal:AbortSignal.any([controller.signal,AbortSignal.timeout(190000)])});
+				if(!response.ok) throw new Error('Satellite data unavailable');
+				const data:ObservedFloods=await response.json();
+				if(!controller.signal.aborted) observed=data;
+			} catch { if(!controller.signal.aborted) observed=observed?{...observed,stale:true}:null; }
+			finally { if(!controller.signal.aborted) observedLoading=false; }
+		},400);
+		return ()=> {clearTimeout(timer);controller.abort();};
+	});
+	function updateObservedBounds(bounds:Bounds) {
+		// All requests share the bounded Metro Cebu server cache. Avoid refetching on tiny pans.
+		const inCebu=(b:Bounds)=>b[2]>=CEBU_BOUNDS[0]&&b[0]<=CEBU_BOUNDS[2]&&b[3]>=CEBU_BOUNDS[1]&&b[1]<=CEBU_BOUNDS[3];
+		if(inCebu(bounds)!==inCebu(observedBounds)) observedBounds=bounds;
+	}
+
+	let mobileViewportHeight = $state(0);
+	let mobilePanel = $state<'controls' | 'notifications' | 'configuration' | null>(null);
+	let desktopDrawerOpen = $state(false);
+	const drawerOpen = $derived(mobile ? mobilePanel === 'configuration' : desktopDrawerOpen);
+	let panelTrigger: HTMLElement | null = null;
+	async function setMobilePanel(panel: typeof mobilePanel, restoreFocus = false) {
+		if (!mobile && panel === 'controls') return;
+		if (panel === 'notifications') desktopDrawerOpen=false;
+		if (panel && panel !== mobilePanel) panelTrigger = document.activeElement as HTMLElement;
+		mobilePanel = panel;
+		await tick();
+		if (restoreFocus) {
+			const target = panelTrigger?.getClientRects().length
+				? panelTrigger
+				: document.querySelector<HTMLElement>('.mobile-sheet-summary, .notification-toggle');
+			target?.focus();
+		} else if (panel === 'notifications')
+			document.getElementById('mobile-notification-title')?.focus();
+		else if (panel === 'configuration')
+			document.querySelector<HTMLButtonElement>('.configuration-close button')?.focus();
+	}
+	function setConfiguration(open: boolean) {
+		if (mobile) void setMobilePanel(open ? 'configuration' : null, !open);
+		else {desktopDrawerOpen = open; if(open) mobilePanel=null;}
+	}
+	function beginPick(kind: NonNullable<typeof picking>) {
+		picking = kind;
+		void setMobilePanel(null);
+	}
+	let rerouteAbort: AbortController | null = null;
 	let routeGeneration = 0,
 		rerouteGeneration = 0,
 		lastSpeech = '',
@@ -115,6 +185,10 @@
 		VEHICLE_CATEGORIES.find((v) => v.id === vehicleId) || DEFAULT_VEHICLE_CATEGORY
 	);
 	const ownRoad = $derived(roads.find((r) => r.key === selectedKey) || roads[0] || null);
+	const observedPath = $derived(ownRoad ? remainingPath(ownRoad.polyline, progress) : []);
+	const observedEncounters = $derived(recentObservedFloods(online&&!offlineDemo?observed:null,clock).filter((f)=>intersectsObservedFlood(observedPath,f.geometry)));
+	const observedAvoidance = $derived(actionableObservedFloods(observed,clock));
+	const canAvoidObserved = $derived(!offlineDemo && online && observedAvoidance.some((f)=>intersectsObservedFlood(observedPath,f.geometry)));
 	const active = $derived(ownRoad);
 	const currentProgress = $derived(progress);
 	const displayedOrigin = $derived(origin);
@@ -186,7 +260,9 @@
 			(progress === 0
 				? ranked.find(
 						(r) =>
-							r.road.key !== ownRoad?.key && !r.blocked && (blocked || r.seconds < remainingSeconds)
+							r.road.key !== ownRoad?.key &&
+							!r.blocked &&
+							JSON.stringify(r.road.polyline) !== JSON.stringify(ownRoad?.polyline)
 					)?.road
 				: null) ||
 			null
@@ -196,6 +272,97 @@
 			? evaluateSimulation(alternative, conditions, vehicle.maxSafeWaterDepthCm, 0, vehicle.id)
 			: null
 	);
+
+	const mainError = $derived(
+		error ||
+			routeError ||
+			rainfallError ||
+			(staleRainfall
+				? 'Rainfall assessment is stale. Refresh for updated conditions.'
+				: staleTraffic
+					? 'Live traffic estimate is stale. Refresh for updated timing.'
+					: '')
+	);
+	const providerMessage = $derived(
+		[
+			!trafficSimulation ? trafficStatus || 'Loading live traffic…' : '',
+			!floodSimulation
+				? assessment
+					? `Rainfall assessed ${new Date(assessment.assessedAt).toLocaleTimeString()}`
+					: 'Loading rainfall assessment…'
+				: ''
+		]
+			.filter(Boolean)
+			.join(' · ')
+	);
+	const notificationCount = $derived(
+		[
+			offlineDemo,
+			!connected && shared && !offlineDemo,
+			!trafficSimulation && ownRoad?.source === 'osrm',
+			started && gpsTravel && gpsMessage,
+			syncError && !offlineDemo,
+			blocked,
+			alternative && alternativeEvaluation,
+			mainError,
+			notice,
+			providerMessage,
+			observedEncounters.length > 0,
+			observed?.stale || observed?.status === 'unavailable'
+		].filter(Boolean).length
+	);
+	const urgentMessage = $derived(
+		blocked
+			? 'Simulated flood · route blocked'
+			: routeError
+				? 'Route unavailable'
+				: started && gpsTravel && gpsMessage
+					? gpsMessage
+					: started && !gpsTravel && liveUnavailable
+						? 'Travel paused · check conditions'
+						: ''
+	);
+	onMount(() => {
+		const query = window.matchMedia('(max-width: 759px)');
+		const desktopQuery=window.matchMedia('(min-width: 1100px)'), colorQuery=window.matchMedia('(prefers-color-scheme: dark)');
+		const updateDesktop=()=>wide=desktopQuery.matches, updateColor=()=>systemDark=colorQuery.matches;
+		updateDesktop();updateColor();
+		desktopQuery.addEventListener('change',updateDesktop);colorQuery.addEventListener('change',updateColor);
+		try { const saved=localStorage.getItem('floodnav-theme'); if(saved==='dark'||saved==='light'||saved==='system') theme=saved; } catch { /* Keep default. */ }
+		const refreshObserved=()=> {if(!document.hidden) observedRequest++;};
+		const observedTimer=setInterval(refreshObserved,15*60000);
+		document.addEventListener('visibilitychange',refreshObserved);
+		const viewport = window.visualViewport;
+		const resizeViewport = () => {
+			mobileViewportHeight = viewport?.height || window.innerHeight;
+		};
+		resizeViewport();
+		viewport?.addEventListener('resize', resizeViewport);
+		window.addEventListener('resize', resizeViewport);
+		const update = () => {
+			mobile = query.matches;
+			mobilePanel = null;
+		};
+		update();
+		query.addEventListener('change', update);
+		const outside = (event: PointerEvent) => {
+			if (
+				mobilePanel === 'notifications' &&
+				event.target instanceof Element &&
+				!event.target.closest('.demo-alerts, .notification-toggle, .mobile-urgent')
+			)
+				void setMobilePanel(null);
+		};
+		document.addEventListener('pointerdown', outside);
+		return () => {
+			query.removeEventListener('change', update);
+			desktopQuery.removeEventListener('change',updateDesktop);colorQuery.removeEventListener('change',updateColor);
+			clearInterval(observedTimer);document.removeEventListener('visibilitychange',refreshObserved);
+			viewport?.removeEventListener('resize', resizeViewport);
+			window.removeEventListener('resize', resizeViewport);
+			document.removeEventListener('pointerdown', outside);
+		};
+	});
 
 	async function api(path: string, method = 'GET', payload?: unknown) {
 		const response = await fetch(path, {
@@ -332,6 +499,7 @@
 		document.addEventListener('visibilitychange', visibility);
 		return () => {
 			disposed = true;
+			rerouteAbort?.abort();
 			clearInterval(ticker);
 			clearInterval(poll);
 			clearInterval(refresh);
@@ -489,6 +657,7 @@
 			);
 	});
 	function startTrip() {
+		void setMobilePanel(null);
 		requestedMode = travelMode;
 		if (gpsTravel && (!window.isSecureContext || !navigator.geolocation)) {
 			notice = 'Live GPS needs HTTPS (or localhost) and a browser with location support.';
@@ -611,7 +780,7 @@
 			});
 		else if (picking) {
 			picked = { kind: picking, center: point, token: Date.now() };
-			drawerOpen = true;
+			setConfiguration(true);
 		}
 		picking = null;
 	}
@@ -675,14 +844,16 @@
 		void selectedKey;
 		if (revision === undefined || !editable || busy) return;
 		untrack(() => {
+			rerouteAbort?.abort();
 			candidates = [];
 			rerouteGeneration++;
 			rerouting = false;
 			if (!gpsTravel && ownRoad && !arrived && (blocked || (evaluation?.delaySeconds || 0) > 0))
-				void findAlternative();
+				void findAlternative(true);
 		});
 	});
-	async function findAlternative() {
+	async function findAlternative(fasterOnly = false) {
+		rerouteAbort?.abort();
 		if (!ownRoad || !editable) return;
 		if (offlineDemo && (progress > 0 || roads.length < 2)) {
 			notice =
@@ -703,6 +874,7 @@
 		const atStart = progress === 0;
 		const abort = new AbortController(),
 			timer = setTimeout(() => abort.abort(), 18000);
+		rerouteAbort = abort;
 		try {
 			const result =
 				atStart && roads.length > 1
@@ -720,22 +892,70 @@
 						!r.blocked &&
 						JSON.stringify(r.road.polyline) !== JSON.stringify(currentPath) &&
 						(!atStart || r.road.key !== currentRoad.key) &&
-						(blocked || r.seconds < remainingSeconds)
+						(!fasterOnly || blocked || r.seconds < remainingSeconds)
 				)
 				.map((r) => r.road);
-			if (!candidates.length)
+			if (!candidates.length && blocked && conditions.floodSimulation && !offlineDemo) {
+				notice = 'Searching nearby roads around the simulated flooding…';
+				const hazards = floodZones(conditions.zones).filter(
+					(zone) => zone.depthCm > vehicle.maxSafeWaterDepthCm
+				);
+				const detours = await fetchFloodDetours(
+					current,
+					destination.coordinate,
+					currentPath,
+					hazards,
+					abort.signal
+				);
+				if (version !== rerouteGeneration || disposed) return;
+				candidates = rankSimulationRoutes(
+					detours,
+					conditions,
+					vehicle.maxSafeWaterDepthCm,
+					vehicle.id
+				)
+					.filter((route) => !route.blocked)
+					.map((route) => route.road);
+				notice = candidates.length
+					? 'Found a road detour avoiding the blocking simulated flood zones. ETA uses basic road estimates.'
+					: 'No passable detour found in the nearby roads checked. Try another start or destination, or review the simulated flood areas.';
+			} else if (!candidates.length)
 				notice = blocked
 					? 'No passable alternative available among returned roads. Travel stays paused.'
-					: 'No faster alternative available among returned roads.';
+					: fasterOnly
+						? 'No faster alternative available among returned roads.'
+						: 'No different passable route returned by the routing service.';
 		} catch (e) {
 			if (version === rerouteGeneration)
 				notice = e instanceof Error ? e.message : 'Could not find an alternative.';
 		} finally {
 			clearTimeout(timer);
+			if (rerouteAbort === abort) rerouteAbort = null;
 			if (version === rerouteGeneration) rerouting = false;
 		}
 	}
+	async function findObservedAlternative() {
+		if(!ownRoad||!canAvoidObserved||rerouting) return;
+		rerouteAbort?.abort();
+		const abort=new AbortController(); rerouteAbort=abort;
+		const version=++rerouteGeneration;
+		const from:Coordinate=[...position];
+		const polygons=observedAvoidance.flatMap((f)=>f.geometry.coordinates.map((polygon)=>({type:'MultiPolygon' as const,coordinates:[polygon]})));
+		const hazards=floodSimulation?floodZones(conditions.zones).filter((z)=>z.depthCm>vehicle.maxSafeWaterDepthCm):[];
+		rerouting=true; candidates=[];
+		try {
+			const routes=await fetchFloodDetours(from,destination.coordinate,observedPath,hazards,abort.signal,polygons);
+			if(version!==rerouteGeneration||disposed) return;
+			// A moving GPS origin makes the returned candidates obsolete.
+			if(haversineDistanceKm(from,position)*1000>30) {notice='Your position changed. Search again from your current location.';return;}
+			candidates=routes;
+			notice=routes.length?'Alternative avoids the recent satellite flood polygons. Other road conditions remain unconfirmed.':'No alternative found in the nearby roads checked. This does not prove that no detour exists.';
+		} catch(e) { if(version===rerouteGeneration) notice=e instanceof Error?e.message:'Alternative search unavailable.'; }
+		finally {if(version===rerouteGeneration) rerouting=false; if(rerouteAbort===abort) rerouteAbort=null;}
+	}
 	function acceptAlternative(road: RoadRoute) {
+		rerouteAbort?.abort();
+		void setMobilePanel(null, true);
 		rerouteGeneration++;
 		rerouting = false;
 		playing = false;
@@ -762,7 +982,7 @@
 		roads = DEMO_ROADS;
 		selectedKey = DEMO_ROADS[0].key;
 		previewZones = null;
-		drawerOpen = false;
+		setConfiguration(false);
 		picked = null;
 		selectedZone = null;
 		syncError = '';
@@ -779,7 +999,7 @@
 		fixture = false;
 		requestedMode = '';
 		previewZones = null;
-		drawerOpen = false;
+		setConfiguration(false);
 		roads = [];
 		void syncConditions();
 	}
@@ -810,6 +1030,13 @@
 	}
 </script>
 
+{#snippet routeChoices()}
+	<RouteChoices entries={ranked} selected={active?.key||''} disabled={!editable} {busy} recommendedKey={assessment?.recommendedKey} {floodSimulation} onselect={(road)=>{selectedKey=road.key;progress=0;void setMobilePanel(null,true);}} />
+{/snippet}
+{#snippet conditionsSummary()}
+	<ConditionsSummary {observed} loading={observedLoading} offline={!online||offlineDemo} {providerMessage} onretry={()=>observedRequest++}/>
+{/snippet}
+
 <svelte:head
 	><title>Directions · FloodNav</title><meta
 		name="description"
@@ -818,29 +1045,93 @@
 >
 <svelte:window
 	onkeydown={(e) => {
-		if (e.key === 'Escape') picking = null;
+		if (e.key === 'Escape') {
+			picking = null;
+			void setMobilePanel(null, true);
+		}
 	}}
 />
-<main class="demo-shell" class:configuration-open={drawerOpen}>
-	<DemoMap
-		origin={displayedOrigin.coordinate}
-		destination={displayedDestination.coordinate}
-		{position}
-		followPosition={started && gpsTravel && playing && !!gpsPosition}
-		route={active}
-		{alternative}
-		zones={visibleZones}
-		picking={!!picking}
-		liveTraffic={!conditions.trafficSimulation && online && !offlineDemo}
-		offline={offlineDemo || !online}
-		{assessment}
-		onpick={mapPick}
-		onzone={(id) => {
-			selectedZone = id;
-			drawerOpen = true;
-		}}
-		ontrafficstatus={(value) => (trafficStatus = value)}
-	/>
+<main
+	class="demo-shell"
+	data-theme={resolvedTheme}
+	style:--mobile-viewport-height={mobile && mobileViewportHeight
+		? `${mobileViewportHeight}px`
+		: undefined}
+	class:configuration-open={drawerOpen}
+	class:mobile-controls-open={mobilePanel === 'controls'}
+	class:mobile-notifications-open={mobilePanel === 'notifications'}
+	class:map-picking={!!picking}
+>
+	<header class="mobile-topbar">
+		<a href="/" class="brand"><Icon name="route" />FloodNav</a>
+		<div>
+			<select class="theme-select" aria-label="Color theme" value={theme} onchange={(event)=>changeTheme(event.currentTarget.value)}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select>
+			<button
+				class="icon-button"
+				aria-label="Simulation controls"
+				aria-expanded={drawerOpen}
+				disabled={!mounted}
+				onclick={() => setConfiguration(!drawerOpen)}><Icon name="settings" /></button
+			>
+			<button
+				class="icon-button notification-toggle"
+				disabled={!mounted}
+				aria-label={`Notifications, ${notificationCount} active`}
+				aria-expanded={mobilePanel === 'notifications'}
+				aria-controls="mobile-notifications"
+				onclick={() =>
+					setMobilePanel(
+						mobilePanel === 'notifications' ? null : 'notifications',
+						mobilePanel === 'notifications'
+					)}
+			>
+				<Icon name="bell" />{#if notificationCount}<span class="notification-count"
+						>{notificationCount}</span
+					>{/if}
+			</button>
+		</div>
+	</header>
+	{#if urgentMessage && !picking}<button
+			class="mobile-urgent"
+			aria-live="polite"
+			onclick={() => setMobilePanel('notifications')}
+			><Icon name="rain" size={18} /><span>{urgentMessage}</span><Icon
+				name="chevron"
+				size={16}
+			/></button
+		>{/if}
+	{#if picking}<div class="pick-banner">
+			<Icon name="pin" /><span
+				>Click the map to place {picking === 'origin'
+					? 'your starting point'
+					: picking === 'destination'
+						? 'your destination'
+						: `a ${picking} area`}</span
+			><button onclick={() => (picking = null)}>Cancel</button>
+		</div>{/if}
+	<div class="mobile-map-stage">
+		<DemoMap
+			origin={displayedOrigin.coordinate}
+			destination={displayedDestination.coordinate}
+			{position}
+			followPosition={started && gpsTravel && playing && !!gpsPosition}
+			route={active}
+			{alternative}
+			zones={visibleZones}
+			picking={!!picking}
+			liveTraffic={!conditions.trafficSimulation && online && !offlineDemo}
+			offline={offlineDemo || !online}
+			{assessment}
+			{observed}
+			onbounds={updateObservedBounds}
+			onpick={mapPick}
+			onzone={(id) => {
+				selectedZone = id;
+				setConfiguration(true);
+			}}
+			ontrafficstatus={(value) => (trafficStatus = value)}
+		/>
+	</div>
 	<div class="map-source-badges">
 		{#if offlineDemo}<span>Offline demo · this device only</span>{/if}
 		<span
@@ -865,7 +1156,27 @@
 			><span class="demo-label">{gpsTravel ? 'LIVE GPS' : 'TRAVEL DEMO'}</span>
 		</header>
 		{#if !travelStarted}
-			<div class="planner-body">
+			<button
+				class="mobile-sheet-summary"
+				disabled={!mounted}
+				aria-expanded={mobilePanel === 'controls'}
+				aria-controls="mobile-planner"
+				aria-label={mobilePanel === 'controls' ? 'Collapse trip controls' : 'Expand trip controls'}
+				onclick={() => setMobilePanel(mobilePanel === 'controls' ? null : 'controls')}
+			>
+				<span
+					><strong>{destination.name || 'Choose destination'}</strong><small
+						>{VEHICLE_TRAVEL_PROFILES[vehicle.id].label} · {gpsTravel ? 'GPS' : 'Demo'} · {busy
+							? 'Finding route…'
+							: blocked
+								? 'Blocked'
+								: ownRoad
+									? `${formatTravelTime(remainingSeconds)} · ${(ownRoad.distanceMeters / 1000).toFixed(1)} km`
+									: 'Choose destination'}</small
+					></span
+				><Icon name="chevron" />
+			</button>
+			<div class="planner-body" id="mobile-planner">
 				<div class="planner-title">
 					<h1>Where to?</h1>
 					<p>A clearer route through changing conditions.</p>
@@ -913,14 +1224,14 @@
 							value={displayedOrigin}
 							disabled={!editable || offlineDemo}
 							onchoose={(p) => changeWaypoint('origin', p)}
-							onpick={() => (picking = 'origin')}
+							onpick={() => beginPick('origin')}
 							ongps={locate}
 						/><LocationPicker
 							label="Destination"
 							value={displayedDestination}
 							disabled={!editable || offlineDemo}
 							onchoose={(p) => changeWaypoint('destination', p)}
-							onpick={() => (picking = 'destination')}
+							onpick={() => beginPick('destination')}
 						/>
 					</div>
 					<button
@@ -936,48 +1247,8 @@
 					>
 				</div>
 			</div>
-			<div class="route-results" class:collapsed>
-				<div class="route-results-title">
-					<span>{busy ? 'Finding your route…' : 'Recommended routes'}</span><button
-						class="icon-button mobile-only"
-						aria-label="Toggle route details"
-						onclick={() => (collapsed = !collapsed)}><Icon name="chevron" size={17} /></button
-					>
-				</div>
-				<div class="route-results-content">
-					{#each ranked as result, i (result.road.key)}{@const road =
-							result.road}{@const roadBlocked = result.blocked}{@const seconds =
-							result.seconds}<button
-							class="demo-route-card"
-							class:chosen={active?.key === road.key}
-							disabled={!editable}
-							onclick={() => {
-								selectedKey = road.key;
-								progress = 0;
-							}}
-							><span class="route-card-icon"><Icon name="car" /></span><span class="route-card-main"
-								><strong
-									>{roadBlocked ? 'Blocked — ETA unavailable' : formatTravelTime(seconds)}
-									<small>{(road.distanceMeters / 1000).toFixed(1)} km</small></strong
-								><span
-									>{!floodSimulation && assessment?.recommendedKey === road.key
-										? 'Lower estimated rainfall exposure'
-										: i === 0 && !roadBlocked
-											? 'Recommended route'
-											: 'Alternative route'}</span
-								><small class:blocked-text={roadBlocked}
-									>{roadBlocked
-										? 'Blocked by simulated flood'
-										: !conditions.floodSimulation
-											? 'Flood conditions unconfirmed'
-											: 'No blocking simulated flood'}</small
-								></span
-							><span class="route-radio"></span></button
-						>{/each}
-				</div>
-				{#if !roads.length && !busy}<p class="quiet-text">
-						Choose your starting point and destination.
-					</p>{/if}
+			<div class="route-results">
+				{#if !wide}{@render routeChoices()}{/if}
 				<label class="travel-mode"
 					>Travel mode
 					<select
@@ -1003,6 +1274,7 @@
 						? 'Uses your device location · keep this page open'
 						: `Simulated travel · ${playbackSpeed}× playback`}
 				</p>
+				{#if !wide}<div class="inline-conditions">{@render conditionsSummary()}</div>{/if}
 			</div>
 		{:else}
 			<div class="maneuver-card">
@@ -1039,14 +1311,15 @@
 						? 'Shared conditions connected'
 						: 'Connecting…'}</span
 			>
-			<button
-				class="text-button"
-				onclick={() => (drawerOpen = !drawerOpen)}
-				disabled={!mounted}
-				aria-expanded={drawerOpen}>Simulation controls</button
-			>
 		</footer>
 	</aside>
+	{#if wide}<aside class="insights-panel" aria-label="Route options and conditions">
+		{#if !travelStarted}{@render routeChoices()}{:else}
+			<h2>Remaining journey</h2><p>{(remainingMeters/1000).toFixed(1)} km · {formatTravelTime(remainingSeconds)}</p>
+			{#each candidates as road}<button class="demo-route-card" onclick={()=>acceptAlternative(road)}>Use alternative · {(road.distanceMeters/1000).toFixed(1)} km</button>{/each}
+		{/if}
+		{@render conditionsSummary()}
+	</aside>{/if}
 	{#if travelStarted}<section class="trip-card" aria-label="Trip progress">
 			<div>
 				<strong
@@ -1095,7 +1368,7 @@
 		</section>{/if}
 	<aside class="controller-drawer" hidden={!drawerOpen} aria-label="Scenario configuration">
 		<div class="configuration-close">
-			<button class="text-button" onclick={() => (drawerOpen = false)}
+			<button class="text-button" onclick={() => setConfiguration(false)}
 				>Close configuration <Icon name="close" size={16} /></button
 			>
 		</div>
@@ -1115,8 +1388,7 @@
 					{picked}
 					{selectedZone}
 					onpick={(kind) => {
-						picking = kind;
-						if (window.innerWidth < 760) drawerOpen = false;
+						beginPick(kind);
 					}}
 					oncancelpick={() => (picking = null)}
 					onapply={apply}
@@ -1132,21 +1404,62 @@
 			>Load example trip: Fuente → SM City</button
 		>
 	</aside>
-	<div class="demo-alerts" aria-live="polite">
+	<div
+		class="demo-alerts"
+		id="mobile-notifications"
+		aria-label="Notifications"
+		aria-live={mobile ? 'off' : 'polite'}
+	>
+		<div class="mobile-notification-heading">
+			<div>
+				<h2 id="mobile-notification-title" tabindex="-1">Notifications</h2>
+				<small
+					>{trafficSimulation ? 'Simulated traffic' : 'Live traffic'} · {floodSimulation
+						? 'Simulated flooding'
+						: 'Live rainfall'}<br />{offlineDemo
+						? 'Local offline demo'
+						: connected
+							? 'Shared conditions connected'
+							: 'Shared conditions disconnected'}</small
+				>
+			</div>
+			<button
+				class="icon-button"
+				aria-label="Close notifications"
+				onclick={() => setMobilePanel(null, true)}><Icon name="close" /></button
+			>
+		</div>
+		{#if notificationCount === 0}<p class="mobile-notification-empty">
+				No active notifications
+			</p>{/if}
+		{#if syncError && !offlineDemo}<div class="error-banner" role="alert">
+				{syncError}<button onclick={() => void syncConditions()}>Retry synchronization</button>
+			</div>{/if}
+		{#if mainError}<div class="error-banner" role="alert">
+				{mainError}{#if !error}<button
+						onclick={() => {
+							routeRequest++;
+							weatherRequest++;
+						}}>Retry</button
+					>{/if}
+			</div>{/if}
+		{#if observed?.stale || observed?.status === 'unavailable'}<div class="error-banner">Satellite provider unavailable. {observed?.fetchedAt?'Showing dated cached observations.':'Flood conditions remain unknown.'}<button disabled={observedLoading||!online||offlineDemo} onclick={()=>observedRequest++}>Retry satellite data</button></div>{/if}
+		{#if observedEncounters.length}<div class="warning-banner"><Icon name="rain"/><div><strong>Satellite-observed flooding intersects this route</strong><p>Recent observation, not a confirmed road closure. Check local conditions.</p>{#if canAvoidObserved}<button disabled={rerouting} onclick={findObservedAlternative}>{rerouting?'Checking roads…':'Find alternative around observed flooding'}</button>{/if}</div></div>{/if}
+		{#if blocked}<div class="warning-banner">
+				<Icon name="rain" />
+				<div>
+					<strong>{gpsTravel ? 'Simulated flood ahead' : 'Flood ahead. Travel paused.'}</strong>
+					<p>A simulated flood blocks the remaining route.</p>
+					<button disabled={rerouting || !editable} onclick={() => findAlternative()}
+						>{rerouting ? 'Checking roads…' : 'Find alternative from here'}</button
+					>
+				</div>
+			</div>{/if}
 		{#if offlineDemo}<div class="info-banner">
 				<span>Offline route diagram · map tiles and live data need internet.</span
 				>{#if online}<button onclick={exitOfflineDemo}>Return to shared live mode</button>{/if}
 			</div>{/if}
 
-		{#if picking}<div class="pick-banner">
-				<Icon name="pin" /><span
-					>Click the map to place {picking === 'origin'
-						? 'your starting point'
-						: picking === 'destination'
-							? 'your destination'
-							: `a ${picking} area`}</span
-				><button onclick={() => (picking = null)}>Cancel</button>
-			</div>{/if}
 		{#if !connected && shared && !offlineDemo}<div class="info-banner">
 				Shared conditions disconnected. {gpsTravel
 					? 'GPS travel remains available.'
@@ -1160,46 +1473,19 @@
 				{gpsMessage}
 			</div>{/if}
 
-		{#if syncError && !offlineDemo}<div class="error-banner" role="alert">
-				{syncError}<button onclick={() => void syncConditions()}>Retry synchronization</button>
-			</div>{/if}
-		{#if blocked}<div class="warning-banner">
-				<Icon name="rain" />
-				<div>
-					<strong>{gpsTravel ? 'Simulated flood ahead' : 'Flood ahead. Travel paused.'}</strong>
-					<p>A simulated flood blocks the remaining route.</p>
-					<button disabled={rerouting || !editable} onclick={findAlternative}
-						>{rerouting ? 'Checking roads…' : 'Find alternative from here'}</button
-					>
-				</div>
-			</div>{/if}
 		{#if alternative && alternativeEvaluation}<div class="info-banner alternative-banner">
 				<span
-					>{blocked ? 'Passable alternative' : 'Faster alternative'} · {formatTravelTime(
-						alternativeEvaluation.seconds
-					)}
-					{#if !blocked}
+					>{blocked
+						? 'Passable alternative'
+						: alternativeEvaluation.seconds < remainingSeconds
+							? 'Faster alternative'
+							: 'Alternative route'} · {formatTravelTime(alternativeEvaluation.seconds)}
+					{#if !blocked && alternativeEvaluation.seconds < remainingSeconds}
 						· Save {formatTravelTime(remainingSeconds - alternativeEvaluation.seconds)}{/if}</span
 				>
 				<button disabled={!editable || rerouting} onclick={() => acceptAlternative(alternative)}
 					>Use alternative</button
 				>
-			</div>{/if}
-		{#if error || routeError || rainfallError || staleTraffic || staleRainfall}<div
-				class="error-banner"
-				role="alert"
-			>
-				{error ||
-					routeError ||
-					rainfallError ||
-					(staleRainfall
-						? 'Rainfall assessment is stale. Refresh for updated conditions.'
-						: 'Live traffic estimate is stale. Refresh for updated timing.')}{#if !error}<button
-						onclick={() => {
-							routeRequest++;
-							weatherRequest++;
-						}}>Retry</button
-					>{/if}
 			</div>{/if}
 		{#if notice}<div class="info-banner">
 				<span>{notice}</span><button
@@ -1208,8 +1494,13 @@
 					onclick={() => (notice = '')}><Icon name="close" size={16} /></button
 				>
 			</div>{/if}
+		{#if providerMessage}<div class="info-banner mobile-provider-status">
+				{providerMessage}
+			</div>{/if}
 	</div>
-	{#if !conditions.trafficSimulation || !conditions.floodSimulation}<div class="provider-status">
+	{#if !conditions.trafficSimulation || !conditions.floodSimulation}<div
+			class="provider-status desktop-provider-status"
+		>
 			{!conditions.trafficSimulation
 				? trafficStatus || 'Loading live traffic…'
 				: ''}{!conditions.floodSimulation

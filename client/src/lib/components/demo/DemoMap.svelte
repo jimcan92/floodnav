@@ -3,6 +3,8 @@
 	import type * as Leaflet from 'leaflet';
 	import 'leaflet/dist/leaflet.css';
 	import Icon from './Icon.svelte';
+	import type { Bounds, ObservedFloods } from '$lib/types/observedFlood';
+	import { observationTime } from '$lib/services/observedFlood';
 	import type { Coordinate } from '$lib/types/navigation';
 	import type { SimulationZone } from '$lib/types/demo';
 	import type { RoadRoute } from '$lib/services/routingService';
@@ -19,6 +21,8 @@
 		followPosition = false,
 		offline = false,
 		assessment = null,
+		observed = null,
+		onbounds,
 		onpick,
 		onzone,
 		ontrafficstatus
@@ -34,6 +38,8 @@
 		followPosition?: boolean;
 		offline?: boolean;
 		assessment?: ExposureAssessment | null;
+		observed?: ObservedFloods | null;
+		onbounds?: (bounds: Bounds)=>void;
 		onpick: (p: Coordinate) => void;
 		onzone?: (id: string) => void;
 		ontrafficstatus?: (message: string) => void;
@@ -47,16 +53,18 @@
 	let ready = $state(false),
 		layer = $state('Streets'),
 		layerOpen = $state(false),
+		showObserved = $state(true),
+		showSusceptibility = $state(true),
+		showSimulation = $state(true),
 		tileError = $state(false);
 	let bases: Record<string, Leaflet.TileLayer> = {},
 		fitted = '';
 	function fit() {
 		if (!map) return;
 		const path = route?.polyline || [origin, destination];
-		const narrow = window.innerWidth < 760;
-		map.fitBounds(L.latLngBounds(path), {
-			paddingTopLeft: narrow ? [30, 260] : [410, 90],
-			paddingBottomRight: narrow ? [30, 160] : [70, 100],
+				map.fitBounds(L.latLngBounds(path), {
+			paddingTopLeft: [24, 24],
+			paddingBottomRight: [24, 64],
 			maxZoom: 16
 		});
 	}
@@ -90,7 +98,9 @@
 					if (map.hasLayer(bases[name])) tileError = true;
 				});
 			}
-			if (!offline) bases.Streets.addTo(map);
+			layer = window.innerWidth < 760 ? 'Streets' : 'Hybrid';
+			if (!offline) bases[layer].addTo(map);
+			map.on('moveend',()=>{const b=map.getBounds();onbounds?.([b.getWest(),b.getSouth(),b.getEast(),b.getNorth()]);});
 			group = L.layerGroup().addTo(map);
 			car = L.marker(position, {
 				interactive: false,
@@ -124,12 +134,12 @@
 	$effect(() => {
 		if (!ready) return;
 		group.clearLayers();
-		if (assessment)
+		if (assessment && showSusceptibility)
 			for (const feature of assessment.hazards.features)
 				L.geoJSON(feature as GeoJSON.Feature, {
 					style: { color: '#7c3aed', weight: 1, fillOpacity: 0.12 }
 				}).addTo(group);
-		for (const z of zones.filter((z) => z.enabled)) {
+		for (const z of zones.filter((z) => z.enabled && showSimulation)) {
 			const color =
 				z.kind === 'flood'
 					? '#0891b2'
@@ -155,6 +165,15 @@
 				if (picking) onpick(z.center);
 				else onzone?.(z.id);
 			});
+		}
+		if (observed && showObserved) for(const feature of observed.features) {
+			const p=feature.properties;
+			const recent=!offline&&!observed.stale && Date.now()-Date.parse(p.observedAt)<=observed.freshnessHours*3600000;
+			const area=L.geoJSON(feature as GeoJSON.Feature,{style:{color:recent?'#16d4c4':'#93b6b2',fillColor:'#16d4c4',weight:2,fillOpacity:recent?0.35:0.16,dashArray:p.quality==='caution'?'4 4':undefined}}).addTo(group);
+			const label=document.createElement('div');
+			const age=Math.max(0,Math.floor((Date.now()-Date.parse(p.observedAt))/3600000));
+			label.textContent=`Satellite-observed flooding · ${observationTime(p.observedAt)} · ${age}h old · ${recent?'recent observation':'dated context'} · ${p.quality==='high'?'likelihood ≥80, no advisory flags':'quality caution'} · GFM ${p.version}. No water-depth estimate. ${observed.attribution}`;
+			area.bindPopup(label);
 		}
 		if (alternative)
 			L.polyline(alternative.polyline, {
@@ -267,6 +286,9 @@
 						class:active={name === layer}
 						onclick={() => changeLayer(name)}>{name}</button
 					>{/each}
+				<label><input type="checkbox" bind:checked={showObserved}/> Satellite observations</label>
+				<label><input type="checkbox" bind:checked={showSusceptibility}/> Flood susceptibility</label>
+				<label><input type="checkbox" bind:checked={showSimulation}/> Simulation areas</label>
 			</div>{/if}
 	</div>
 {/if}

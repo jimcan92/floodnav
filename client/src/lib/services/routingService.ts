@@ -1,3 +1,5 @@
+import type { FloodGeometry } from '../types/observedFlood';
+import { intersectsObservedFlood } from './observedFlood';
 import type {
 	Coordinate,
 	FloodHazardZone,
@@ -176,10 +178,93 @@ export async function fetchRoadRoutes(
 	destination: Coordinate,
 	signal: AbortSignal
 ): Promise<RoadRoute[]> {
-	const url = `https://router.project-osrm.org/route/v1/driving/${origin[1]},${origin[0]};${destination[1]},${destination[0]}?alternatives=true&overview=full&geometries=geojson&steps=true`;
+	const url = `https://router.project-osrm.org/route/v1/driving/${origin[1]},${origin[0]};${destination[1]},${destination[0]}?alternatives=3&overview=full&geometries=geojson&steps=true`;
 	const response = await fetch(url, { signal });
 	if (!response.ok) throw new Error('Routing service unavailable. Retry or use Demo scenarios.');
 	return parseRoadRoutes(await response.json(), 'osrm');
+}
+
+// OSRM's ordinary alternatives are not an exhaustive search and do not know our
+// simulated hazards. Probe roads to either side of the blocking area, then check
+// the entire returned road geometry (including its snapped endpoints).
+export async function fetchFloodDetours(
+	origin: Coordinate,
+	destination: Coordinate,
+	path: Coordinate[],
+	floods: FloodHazardZone[],
+	signal: AbortSignal,
+	observedPolygons: FloodGeometry[] = []
+): Promise<RoadRoute[]> {
+	signal.throwIfAborted();
+	const areas = [
+		...floods.map((zone)=>({center:zone.center,radiusMeters:zone.radiusMeters,intersects:(line:Coordinate[])=>intersectsFlood(line,zone)})),
+		...observedPolygons.map((geometry)=>{
+			const points=geometry.coordinates.flat(2);
+			const extent=points.reduce((b,p)=>[Math.min(b[0],p[0]),Math.min(b[1],p[1]),Math.max(b[2],p[0]),Math.max(b[3],p[1])],[Infinity,Infinity,-Infinity,-Infinity]);
+			const center:Coordinate=[(extent[1]+extent[3])/2,(extent[0]+extent[2])/2];
+			const radiusMeters=points.reduce((max,p)=>Math.max(max,haversineDistanceKm(center,[p[1],p[0]])*1000),0);
+			return {center,radiusMeters,intersects:(line:Coordinate[])=>intersectsObservedFlood(line,geometry)};
+		})
+	];
+	const blocking = areas.filter((zone) => zone.intersects(path));
+	if (
+		!blocking.length ||
+		areas.some((zone) => zone.intersects([origin]) || zone.intersects([destination]))
+	)
+		return [];
+	const center: Coordinate = [
+		blocking.reduce((sum, zone) => sum + zone.center[0], 0) / blocking.length,
+		blocking.reduce((sum, zone) => sum + zone.center[1], 0) / blocking.length
+	];
+	const radius = Math.max(
+		...blocking.map((zone) => haversineDistanceKm(center, zone.center) * 1000 + zone.radiusMeters)
+	);
+	const lngScale = 111320 * Math.cos((center[0] * Math.PI) / 180);
+	const dx = (destination[1] - origin[1]) * lngScale;
+	const dy = (destination[0] - origin[0]) * 111320;
+	const length = Math.hypot(dx, dy);
+	if (!length) return [];
+	const found: RoadRoute[] = [];
+	let successfulRequests = 0;
+	// At most six requests, two concurrently. A failed probe must not discard
+	// a road already found on the other side of the flooded area.
+	for (const clearance of [150, 450, 900]) {
+		signal.throwIfAborted();
+		const results = await Promise.allSettled(
+			[-1, 1].map(async (side) => {
+				const offset = (radius + clearance) * side;
+				const via: Coordinate = [
+					center[0] + ((dx / length) * offset) / 111320,
+					center[1] - ((dy / length) * offset) / lngScale
+				];
+				const coordinates = [origin, via, destination]
+					.map(([lat, lng]) => `${lng},${lat}`)
+					.join(';');
+				const url = `https://router.project-osrm.org/route/v1/driving/${coordinates}?alternatives=false&overview=full&geometries=geojson&steps=true&continue_straight=true&waypoints=0;2&radiuses=unlimited;200;unlimited`;
+				const response = await fetch(url, {
+					signal: AbortSignal.any([signal, AbortSignal.timeout(4500)])
+				});
+				const data = await response.json();
+				if (data.code === 'NoRoute' || data.code === 'NoSegment') return [];
+				if (!response.ok) throw new Error('Detour routing service unavailable. Retry the search.');
+				return parseRoadRoutes(data, 'osrm');
+			})
+		);
+		signal.throwIfAborted();
+		for (const result of results) {
+			if (result.status !== 'fulfilled') continue;
+			successfulRequests++;
+			for (const road of result.value) {
+				if (areas.some((zone) => zone.intersects(road.polyline))) continue;
+				const geometry = JSON.stringify(road.polyline);
+				if (found.some((candidate) => JSON.stringify(candidate.polyline) === geometry)) continue;
+				found.push({ ...road, key: `detour_${found.length}` });
+			}
+		}
+		if (found.length) break;
+	}
+	if (!successfulRequests) throw new Error('Detour routing service unavailable. Retry the search.');
+	return found.sort((a, b) => a.durationSeconds - b.durationSeconds);
 }
 
 export function evaluateRoutes(

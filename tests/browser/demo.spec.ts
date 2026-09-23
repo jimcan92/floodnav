@@ -65,6 +65,7 @@ async function publish(request: APIRequestContext, conditions: Conditions) {
   return result.json();
 }
 async function mock(page: Page) {
+  await page.route('**/api/observed-floods',r=>r.fulfill({json:{bounds:[123.75,10.15,124.1,10.55],status:'available',stale:false,message:'',fetchedAt:new Date().toISOString(),freshnessHours:24,features:[],coverage:{observedPixels:0,unknownPixels:0,excludedPixels:0,recentPixels:0,totalPixels:0},observations:[],attribution:'Copernicus'}}));
   await page.route("**/router.project-osrm.org/**", async (request) => {
     // Return geometries beginning at the requested position, including mid-trip reroutes.
     const coordinates = request
@@ -91,6 +92,10 @@ async function mock(page: Page) {
 }
 const chosenEta = (page: Page) =>
   page.locator(".demo-route-card.chosen strong");
+async function openNotifications(page:Page) {
+  const bell=page.getByRole('button',{name:/^Notifications, /});
+  if(await bell.getAttribute('aria-expanded')!=='true') await bell.click();
+}
 async function openControls(page: Page) {
   await page
     .getByRole("button", { name: "Simulation controls", exact: true })
@@ -198,6 +203,7 @@ test("shallow floods change ETA, deep floods block, and alternatives can be sele
   await expect(page.locator(".alternative-banner")).toContainText(
     "Passable alternative",
   );
+  await openNotifications(page);
   await page
     .getByRole("button", { name: "Use alternative", exact: true })
     .click();
@@ -217,12 +223,13 @@ test("shallow floods change ETA, deep floods block, and alternatives can be sele
       },
     ],
   });
+  await openNotifications(page);
   await expect(
     page.getByText("Flood ahead. Travel paused.", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText(
-      "No passable alternative available among returned roads. Travel stays paused.",
+      "No passable detour found in the nearby roads checked. Try another start or destination, or review the simulated flood areas.",
     ),
   ).toBeVisible();
   await expect(
@@ -247,6 +254,7 @@ test("edits ahead mid-trip preserve position and update remaining ETA; reconnect
   await expect(page.locator(".alternative-banner")).toContainText(
     "Faster alternative",
   );
+  await openNotifications(page);
   await context.setOffline(true);
   await expect(
     page.getByText("Shared conditions disconnected. Travel paused.", {
@@ -258,6 +266,7 @@ test("edits ahead mid-trip preserve position and update remaining ETA; reconnect
     zones: [{ ...zone, kind: "flood", depthCm: 100 }],
   });
   await context.setOffline(false);
+  await openNotifications(page);
   await expect(
     page.getByText("Flood ahead. Travel paused.", { exact: true }),
   ).toBeVisible();
@@ -440,7 +449,9 @@ test("live GPS travels without simulations or weather, follows fixes and release
   page.on('request', r => { if (r.url().includes('router.project-osrm.org')) routes.push(r.url()); });
   await page.goto('/');
   await expect(page.getByLabel('Travel mode')).toHaveValue('gps');
+  await page.getByRole('button', { name: /^Notifications, / }).click();
   await expect(page.getByText('Live traffic unavailable · using basic road directions and estimated ETA.')).toBeVisible();
+  await page.getByRole('button', { name: 'Close notifications' }).click();
   await page.getByRole('button', {name: 'Start travel', exact: true}).click();
   await expect(page.locator('.trip-card small')).toContainText('Live GPS');
   await expect(page.locator('.trip-card strong')).toContainText('1 min 40 s');
@@ -496,9 +507,238 @@ test("live GPS permission denial offers retry and never starts demo movement", a
   await page.route('**/api/assessments', r => r.fulfill({status: 503, json: {error: 'No weather'}}));
   await page.goto('/');
   await page.getByRole('button', {name: 'Start travel', exact: true}).click();
+  await openNotifications(page);
   await expect(page.getByRole('status')).toContainText('Location permission denied');
   await expect(page.getByRole('button', {name: 'Resume', exact: true})).toBeEnabled();
   await expect(page.locator('.trip-card small')).toContainText('0.00 km');
   await page.getByRole('button', {name: 'End trip'}).click();
   await expect(page.locator('.trip-card')).toHaveCount(0);
+});
+
+for (const viewport of [{ width: 360, height: 640 }, { width: 390, height: 844 }, { width: 740, height: 390 }]) {
+  test(`mobile map space and collapsible controls ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    const size = viewport;
+    await page.setViewportSize(size);
+    await page.goto('/');
+    const startButton = page.getByRole('button', { name: 'Start travel', exact: true });
+    await expect(startButton).toBeEnabled();
+    await expect(page.getByLabel('Starting point', { exact: true })).toBeHidden();
+    const map = page.locator('.demo-map');
+    const box = await map.boundingBox();
+    expect(box!.height).toBeGreaterThanOrEqual(size.height * 0.6);
+    await expect(page.locator('.demo-alerts')).toBeHidden();
+    await page.screenshot({ path: `test-results/mobile-map-${size.width}x${size.height}.png` });
+    await page.getByRole('button', { name: 'Expand trip controls' }).click();
+    await expect(page.getByLabel('Starting point', { exact: true })).toBeVisible();
+    expect((await page.locator('.directions-panel').boundingBox())!.height).toBeLessThanOrEqual(size.height / 2 + 1);
+    await page.getByLabel('Destination', { exact: true }).fill('SM');
+    await expect(page.getByRole('button', { name: 'Choose on map', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Choose on map', exact: true }).click();
+    await expect(page.locator('.pick-banner')).toBeVisible();
+    await expect(page.locator('.directions-panel')).toBeHidden();
+    await map.click({ position: { x: 150, y: 100 } });
+    await expect(page.locator('.pick-banner')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Expand trip controls' })).toBeVisible();
+    await page.getByRole('button', { name: 'Expand trip controls' }).click();
+    await page.locator('.demo-route-card').nth(1).click();
+    await expect(page.getByRole('button', { name: 'Expand trip controls' })).toBeVisible();
+    await startButton.click();
+    await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Pause', exact: true }).click();
+    await page.getByRole('button', { name: 'Resume', exact: true }).click();
+    await page.getByRole('button', { name: 'End trip', exact: true }).click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+test('mobile bell groups active notices, keeps blocked warning compact and restores focus', async ({ page, request }) => {
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Start travel', exact: true })).toBeEnabled();
+  await publish(request, { ...empty, zones: [{ ...zone, kind: 'flood', depthCm: 30 }] });
+  await expect(page.locator('.mobile-urgent')).toContainText('route blocked');
+  await expect(page.locator('.demo-alerts')).toBeHidden();
+  const bell = page.getByRole('button', { name: /^Notifications, / });
+  await bell.click();
+  await expect(page.locator('.warning-banner')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Use alternative', exact: true })).toBeVisible();
+  const count = await page.locator('.demo-alerts > .info-banner, .demo-alerts > .warning-banner, .demo-alerts > .error-banner').count();
+  await expect(bell).toHaveAccessibleName(`Notifications, ${count} active`);
+  expect((await page.locator('.demo-alerts').boundingBox())!.height).toBeLessThanOrEqual(256);
+  await page.screenshot({ path: 'test-results/mobile-notifications.png' });
+  await page.keyboard.press('Escape');
+  await expect(bell).toBeFocused();
+  await expect(page.locator('.demo-alerts')).toBeHidden();
+  await bell.click();
+  await page.locator('.demo-map').click({ position: { x: 160, y: 320 } });
+  await expect(page.locator('.demo-alerts')).toBeHidden();
+  await bell.click();
+  await openNotifications(page);
+  await page.getByRole('button', { name: 'Use alternative', exact: true }).click();
+  await expect(page.locator('.mobile-urgent')).toHaveCount(0);
+  await publish(request, empty);
+  await page.getByRole('button', { name: 'Simulation controls', exact: true }).click();
+  await expect(page.locator('.demo-alerts')).toBeHidden();
+  await expect(page.locator('.controller-drawer')).toBeVisible();
+  expect((await page.locator('.controller-drawer').boundingBox())!.height).toBeLessThanOrEqual(320);
+});
+
+
+test('mobile notifications preserve retry actions and offline mode keeps the map clear', async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await publish(request, { ...empty, trafficSimulation: false, floodSimulation: false });
+  await page.route('**/api/demo/routes', r => r.fulfill({ status: 503, json: { error: 'Traffic unavailable' } }));
+  await page.route('**/api/demo/traffic/**', r => r.fulfill({ contentType: 'image/png', body: tile }));
+  let attempts = 0;
+  await page.route('**/api/assessments', r => { attempts++; return r.fulfill({ status: 503, json: { error: 'Rainfall unavailable' } }); });
+  await page.goto('/');
+  await expect.poll(() => attempts).toBeGreaterThan(0);
+  const bell = page.getByRole('button', { name: /^Notifications, / });
+  await expect(page.locator('.demo-alerts')).toBeHidden();
+  await bell.click();
+  await expect(page.locator('.error-banner')).toContainText('Rainfall unavailable');
+  const previous = attempts;
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect.poll(() => attempts).toBeGreaterThan(previous);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.dispatchEvent(new Event('floodnav:offline-demo')));
+  await expect(page.locator('.mobile-sheet-summary')).toContainText('Demo');
+  await expect(page.locator('.demo-alerts')).toBeHidden();
+  expect((await page.locator('.demo-map').boundingBox())!.height).toBeGreaterThan(844 * 0.6);
+  await bell.click();
+  await expect(page.getByText('Offline route diagram · map tiles and live data need internet.')).toBeVisible();
+  await page.getByRole('button', { name: 'Close notifications' }).click();
+  await page.getByRole('button', { name: 'Start travel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+});
+
+
+test('mobile sheet fits a keyboard-sized visual viewport and preserves map pan', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Start travel', exact: true })).toBeEnabled();
+  const map = page.locator('.demo-map');
+  await page.mouse.move(160, 320);
+  await page.mouse.down();
+  await page.mouse.move(220, 380, { steps: 12 });
+  await page.mouse.up();
+  // Let Leaflet's drag inertia finish before comparing center-relative marker positions.
+  await page.waitForTimeout(600);
+  const relativeMarker = async () => {
+    const marker = await page.locator('.traveler-marker').boundingBox();
+    const bounds = await map.boundingBox();
+    return { x: marker!.x + marker!.width / 2 - bounds!.x - bounds!.width / 2,
+      y: marker!.y + marker!.height / 2 - bounds!.y - bounds!.height / 2 };
+  };
+  const before = await relativeMarker();
+  await page.getByRole('button', { name: 'Expand trip controls' }).click();
+  await page.getByRole('button', { name: 'Collapse trip controls' }).click();
+  await expect.poll(async () => Math.abs((await relativeMarker()).x - before.x)).toBeLessThan(2);
+  await expect.poll(async () => Math.abs((await relativeMarker()).y - before.y)).toBeLessThan(2);
+  await page.getByRole('button', { name: 'Expand trip controls' }).click();
+  await page.getByLabel('Destination', { exact: true }).fill('SM');
+  await page.evaluate(() => {
+    Object.defineProperty(window.visualViewport, 'height', { configurable: true, value: 420 });
+    window.visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await expect.poll(async () => (await page.locator('.demo-shell').boundingBox())!.height).toBe(420);
+  expect((await page.locator('.directions-panel').boundingBox())!.height).toBeLessThanOrEqual(210);
+  await page.getByRole('button', { name: 'Close location picker' }).click();
+  await page.evaluate(() => {
+    Reflect.deleteProperty(window.visualViewport!, 'height');
+    window.visualViewport!.dispatchEvent(new Event('resize'));
+  });
+  await expect.poll(async () => (await page.locator('.demo-shell').boundingBox())!.height).toBe(844);
+  await page.getByRole('button', { name: 'Collapse trip controls' }).click();
+  await expect(page.getByLabel('Destination', { exact: true })).toBeHidden();
+});
+
+
+test('blocked ordinary alternatives trigger road detours that can be selected', async ({ page, request }) => {
+  let detourRequests = 0;
+  await page.route('**/router.project-osrm.org/**', async (request) => {
+    const points = request.request().url().split('/driving/')[1].split('?')[0].split(';').map(p => p.split(',').map(Number));
+    const from = points[0], to = points.at(-1)!;
+    if (points.length === 3) detourRequests++;
+    await request.fulfill({ json: { code: 'Ok', routes: points.length === 3
+      ? [route([from, [from[0], 10.325], [to[0], 10.325], to], 140)]
+      : [route([from, to], 100), route([from, to], 105)] } });
+  });
+  await publish(request, { ...empty, zones: [{ ...zone, kind: 'flood', depthCm: 200 }] });
+  await page.goto('/');
+  await expect(page.locator('.alternative-banner')).toContainText('Passable alternative');
+  expect(detourRequests).toBeGreaterThan(0);
+  await expect(page.getByRole('button', { name: 'Start travel', exact: true })).toBeDisabled();
+  await openNotifications(page);
+  await page.getByRole('button', { name: 'Use alternative', exact: true }).click();
+  await expect(chosenEta(page)).toContainText('2 min 20 s');
+  await expect(page.getByRole('button', { name: 'Start travel', exact: true })).toBeEnabled();
+  await expect(page.locator('.warning-banner')).toHaveCount(0);
+});
+
+test('dashboard themes, map layer choice, and tablet layout preserve the journey', async ({page})=>{
+  await page.setViewportSize({width:1440,height:900});
+  await page.goto('/');
+  await expect(page.locator('.demo-shell')).toHaveAttribute('data-theme','dark');
+  await expect(page.locator('.insights-panel')).toBeVisible();
+  await expect(page.locator('.demo-map')).toHaveAttribute('data-map-layer','Hybrid');
+  const map=await page.locator('.demo-map').boundingBox(), left=await page.locator('.directions-panel').boundingBox(), right=await page.locator('.insights-panel').boundingBox();
+  expect(map!.x).toBeGreaterThanOrEqual(left!.x+left!.width);expect(map!.x+map!.width).toBeLessThanOrEqual(right!.x);
+  await page.locator('.layer-button').click();await page.getByRole('button',{name:'Streets',exact:true}).click();
+  const transform=await page.locator('.leaflet-map-pane').getAttribute('style');
+  await page.getByLabel('Color theme').selectOption('light');
+  await expect(page.locator('.demo-shell')).toHaveAttribute('data-theme','light');
+  await expect(page.locator('.leaflet-map-pane')).toHaveAttribute('style',transform!);
+  await expect(page.locator('.demo-map')).toHaveAttribute('data-map-layer','Streets');
+  await page.screenshot({path:'test-results/dashboard-light.png'});
+  await page.reload();await expect(page.locator('.demo-shell')).toHaveAttribute('data-theme','light');
+  await page.getByLabel('Color theme').selectOption('system');await page.emulateMedia({colorScheme:'dark'});
+  await expect(page.locator('.demo-shell')).toHaveAttribute('data-theme','dark');
+  await page.screenshot({path:'test-results/dashboard-dark.png'});
+  await page.setViewportSize({width:900,height:700});
+  await expect(page.locator('.insights-panel')).toHaveCount(0);
+  await expect(page.locator('.directions-panel .demo-route-card')).toHaveCount(2);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+function satelliteData(observedAt=new Date().toISOString(),quality:'high'|'caution'='high') {
+  return {bounds:[123.75,10.15,124.1,10.55],status:'available',stale:false,message:'',fetchedAt:new Date().toISOString(),freshnessHours:24,
+    features:[{type:'Feature',geometry:{type:'MultiPolygon',coordinates:[[[[123.905,10.311],[123.907,10.311],[123.907,10.313],[123.905,10.313],[123.905,10.311]]]]},properties:{productId:'test-scene',observedAt,processedAt:observedAt,version:'4.1.1',quality,minimumLikelihood:quality==='high'?90:70,advisoryFlags:quality==='high'?[]:[1]}}],
+    coverage:{observedPixels:60,unknownPixels:40,excludedPixels:30,recentPixels:60,totalPixels:100},observations:[{productId:'test-scene',observedAt,processedAt:observedAt,version:'4.1.1',coveredPixels:100}],attribution:'Copernicus CEMS'};
+}
+test('recent satellite flood warnings offer an optional verified detour without closing roads', async ({page})=>{
+  await page.route('**/api/observed-floods',r=>r.fulfill({json:satelliteData()}));
+  let probes=0;
+  await page.route('**/router.project-osrm.org/**',async r=>{
+    const points=r.request().url().split('/driving/')[1].split('?')[0].split(';').map(p=>p.split(',').map(Number));
+    if(points.length===3) probes++;
+    await r.fulfill({json:{code:'Ok',routes:[route(points.length===3?[points[0],[points[0][0],10.325],[points.at(-1)![0],10.325],points.at(-1)!]:[points[0],points.at(-1)!],140)]}});
+  });
+  await page.goto('/');await expect(page.getByRole('button',{name:'Start travel',exact:true})).toBeEnabled();
+  await expect(page.locator('.satellite-card')).toContainText('PHT');
+  await expect(page.locator('.demo-alerts')).not.toBeVisible();
+  await openNotifications(page);
+  await expect(page.getByText('Satellite-observed flooding intersects this route')).toBeVisible();
+  await page.getByRole('button',{name:'Find alternative around observed flooding'}).click();
+  await expect.poll(()=>probes).toBeGreaterThan(0);
+  await expect(page.getByRole('button',{name:'Use alternative',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Use alternative',exact:true}).click();
+  await expect(page.getByText('Satellite-observed flooding intersects this route')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Start travel',exact:true})).toBeEnabled();
+});
+test('old and quality-limited satellite observations remain context, with independent map toggles',async({page})=>{
+  const old=new Date(Date.now()-3*86400000).toISOString();
+  await page.route('**/api/observed-floods',r=>r.fulfill({json:satelliteData(old)}));
+  await page.goto('/');await expect(page.locator('.satellite-card')).toContainText('PHT');
+  await openNotifications(page);
+  await expect(page.getByRole('button',{name:'Find alternative around observed flooding'})).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button',{name:/^Notifications,/})).toBeFocused();
+  await page.locator('.layer-button').click();
+  const paths=await page.locator('.leaflet-overlay-pane path').count();
+  await page.getByLabel('Satellite observations',{exact:true}).uncheck();
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(paths-1);
+  await page.getByLabel('Satellite observations',{exact:true}).check();
+  await expect(page.locator('.leaflet-overlay-pane path')).toHaveCount(paths);
+  await expect(page.getByLabel('Simulation areas')).toBeChecked();
 });

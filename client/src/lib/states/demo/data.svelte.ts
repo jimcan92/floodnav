@@ -24,6 +24,7 @@ export const demo = $state({
 	destination: initialDestination(),
 	vehicleId: DEFAULT_VEHICLE_CATEGORY.id as VehicleCategoryId,
 	roads: [] as RoadRoute[],
+	originalRoads: [] as RoadRoute[],
 	selectedKey: '',
 	progress: 0,
 	completedMeters: 0,

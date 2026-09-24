@@ -151,6 +151,18 @@ export async function findObservedAlternative() {
 	}
 }
 
+export async function selectDisplayedAlternative(road: RoadRoute) {
+	if (!navigation.editable || demo.rerouting) return;
+	if (demo.started && haversineDistanceKm(navigation.position, road.polyline[0]) * 1000 > 30) {
+		await findAlternative(false);
+		demo.notice = demo.candidates.length
+			? 'Original routes remain visible for comparison. Choose an updated alternative starting from your current location.'
+			: 'Original routes remain visible, but no updated alternative from your current location was found.';
+		return;
+	}
+	acceptAlternative(road);
+}
+
 export function acceptAlternative(road: RoadRoute) {
 	runtime.rerouteAbort?.abort();
 	void setMobilePanel(null, true);
@@ -192,6 +204,7 @@ export function bindRouteFetch() {
 	let cancelled = false;
 	if (useFixture) {
 		demo.roads = DEMO_ROADS;
+		demo.originalRoads = DEMO_ROADS;
 		demo.selectedKey = DEMO_ROADS[0].key;
 		demo.routeError = '';
 		demo.busy = false;
@@ -204,6 +217,7 @@ export function bindRouteFetch() {
 		.then((result) => {
 			if (!cancelled && generation === runtime.routeGeneration) {
 				demo.roads = result;
+				if (!demo.started || !demo.originalRoads.length) demo.originalRoads = result;
 				demo.selectedKey = result[0]?.key || '';
 				demo.candidates = [];
 			}

@@ -6,6 +6,7 @@
 	import { speechService } from '$lib/services/speechService';
 	import {
 		acceptAlternative,
+		selectDisplayedAlternative,
 		bindGpsWatch,
 		bindRainfallFetch,
 		bindRouteFetch,
@@ -162,7 +163,7 @@
 			alternatives={navigation.routeAlternatives}
 			onselectalternative={(road) => {
 				if (navigation.editable) {
-					if (demo.started) acceptAlternative(road);
+					if (demo.started) void selectDisplayedAlternative(road);
 					else selectRoute(road);
 				}
 			}}

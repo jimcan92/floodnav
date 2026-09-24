@@ -934,3 +934,22 @@ test('compact status chips reveal provider explanations without permanent banner
   await page.keyboard.press('Escape');
   await expect(page.locator('#map-status-detail')).toHaveCount(0);
 });
+
+test('dry travel keeps original routes and alternatives visible after movement and switching', async ({ page }) => {
+  await page.route('**/router.project-osrm.org/**', r => r.fulfill({ json: { code: 'Ok', routes: [route([start, end], 100), route([start, [123.90,10.33], end], 120), route([start, [123.90,10.29], end], 140)] } }));
+  await page.goto('/');
+  await expect(page.locator('.alternative-route-path')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Open directions', exact: true }).click();
+  await page.locator('.demo-route-card').nth(1).click();
+  await expect(page.locator('.alternative-route-path')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Start travel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+  await expect.poll(async () => Number((await page.locator('.trip-card').innerText()).match(/([\d.]+) km traveled/)?.[1] || 0)).toBeGreaterThan(0.04);
+  await expect(page.locator('.alternative-route-path')).toHaveCount(2);
+  await expect(page.locator('.alternative-route-label')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Open journey details' }).click();
+  await expect(page.locator('#directions-panel .demo-route-card')).toHaveCount(2);
+  await page.locator('#directions-panel .demo-route-card').first().click();
+  await expect(page.locator('#mobile-notifications')).toContainText('Original routes remain visible');
+  await expect(page.locator('.alternative-route-path')).toHaveCount(2);
+});

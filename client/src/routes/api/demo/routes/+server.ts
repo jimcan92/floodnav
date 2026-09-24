@@ -24,7 +24,7 @@ export const POST: RequestHandler = ({ request }) =>
 			key: env.TOMTOM_API_KEY,
 			traffic: 'true',
 			departAt: 'now',
-			maxAlternatives: '2',
+			maxAlternatives: '3',
 			instructionsType: 'text',
 			language: 'en-US',
 			computeTravelTimeFor: 'all'

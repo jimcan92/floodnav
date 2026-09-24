@@ -66,6 +66,7 @@ export function changeWaypoint(which: 'origin' | 'destination', value: Waypoint)
 	demo.fixture = false;
 	demo.candidates = [];
 	demo.roads = [];
+	demo.originalRoads = [];
 	demo.routeError = '';
 	if (which === 'origin') demo.origin = value;
 	else demo.destination = value;
@@ -118,6 +119,7 @@ export function startOfflineDemo() {
 	demo.destination = initialDestination();
 	demo.fixture = true;
 	demo.roads = DEMO_ROADS;
+	demo.originalRoads = DEMO_ROADS;
 	demo.selectedKey = DEMO_ROADS[0].key;
 	demo.previewZones = null;
 	setConfiguration(false);
@@ -140,6 +142,7 @@ export function exitOfflineDemo() {
 	demo.previewZones = null;
 	setConfiguration(false);
 	demo.roads = [];
+	demo.originalRoads = [];
 	void syncConditions();
 }
 
@@ -149,10 +152,12 @@ export function loadExampleTrip() {
 	demo.destination = initialDestination();
 	demo.fixture = navigation.trafficSimulation;
 	demo.roads = DEMO_ROADS;
+	demo.originalRoads = DEMO_ROADS;
 	demo.selectedKey = DEMO_ROADS[0].key;
 }
 
 export function stopTrip() {
+	demo.originalRoads = [];
 	demo.gpsPosition = null;
 	runtime.gpsInitialized = false;
 	demo.gpsTimestamp = 0;

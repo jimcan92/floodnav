@@ -134,14 +134,8 @@ const alternative = $derived(
 		null
 );
 const routeAlternatives = $derived(
-	(demo.candidates.length
-		? demo.candidates
-		: demo.progress === 0
-			? ranked.filter((result) => !result.blocked).map((result) => result.road)
-			: []
-	).filter(
+	[...demo.originalRoads, ...demo.roads, ...demo.candidates].filter(
 		(road, index, roads) =>
-			road.key !== ownRoad?.key &&
 			!samePolyline(road.polyline, ownRoad?.polyline || []) &&
 			roads.findIndex((other) => samePolyline(other.polyline, road.polyline)) === index
 	)

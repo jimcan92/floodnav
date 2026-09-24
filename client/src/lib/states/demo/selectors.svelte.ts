@@ -133,6 +133,19 @@ const alternative = $derived(
 			: null) ||
 		null
 );
+const routeAlternatives = $derived(
+	(demo.candidates.length
+		? demo.candidates
+		: demo.progress === 0
+			? ranked.filter((result) => !result.blocked).map((result) => result.road)
+			: []
+	).filter(
+		(road, index, roads) =>
+			road.key !== ownRoad?.key &&
+			!samePolyline(road.polyline, ownRoad?.polyline || []) &&
+			roads.findIndex((other) => samePolyline(other.polyline, road.polyline)) === index
+	)
+);
 const alternativeEvaluation = $derived(
 	alternative
 		? evaluateSimulation(alternative, conditions, vehicle.maxSafeWaterDepthCm, 0, vehicle.id)
@@ -273,6 +286,9 @@ export const navigation = {
 	},
 	get remainingMeters() {
 		return remainingMeters;
+	},
+	get routeAlternatives() {
+		return routeAlternatives;
 	},
 	get alternative() {
 		return alternative;

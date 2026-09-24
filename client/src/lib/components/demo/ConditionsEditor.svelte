@@ -3,6 +3,7 @@
 	import ZoneEditor from './ZoneEditor.svelte';
 	import { untrack } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import { layout } from '$lib/states/layout.svelte';
 	import { demoId } from '$lib/services/demoId';
 	import type { Conditions, SimulationState, SimulationZone } from '$lib/types/demo';
 	import type { Coordinate, DemoScenario } from '$lib/types/navigation';
@@ -175,7 +176,12 @@
 			<span>{draft.trafficSimulation ? 'You control congestion' : 'Uses live traffic and ETA'}</span
 			>
 		</div>
-		{#if draft.trafficSimulation}<button
+		{#if layout.picking === 'traffic'}
+			<div class="area-pick-instruction rounded-box bg-info/10 p-3 text-sm" role="status">
+				<p>Click the map to place a traffic area.</p>
+				<button type="button" class="btn btn-ghost btn-sm mt-2" onclick={oncancelpick}>Cancel</button>
+			</div>
+		{:else if draft.trafficSimulation}<button
 				type="button"
 				class="add-area btn btn-outline btn-sm"
 				onclick={() => onpick('traffic')}><Icon name="plus" size={17} />Add traffic area</button
@@ -208,7 +214,12 @@
 					: 'Estimated exposure, not measured depth'}</span
 			>
 		</div>
-		{#if draft.floodSimulation}<button
+		{#if layout.picking === 'flood'}
+			<div class="area-pick-instruction rounded-box bg-info/10 p-3 text-sm" role="status">
+				<p>Click the map to place a flood area.</p>
+				<button type="button" class="btn btn-ghost btn-sm mt-2" onclick={oncancelpick}>Cancel</button>
+			</div>
+		{:else if draft.floodSimulation}<button
 				type="button"
 				class="add-area btn btn-outline btn-sm"
 				onclick={() => onpick('flood')}><Icon name="plus" size={17} />Add flood area</button

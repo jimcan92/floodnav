@@ -17,7 +17,8 @@
 		destination,
 		position,
 		route = null,
-		alternative = null,
+		alternatives = [],
+		onselectalternative,
 		zones = [],
 		picking = false,
 		liveTraffic = false,
@@ -34,7 +35,8 @@
 		destination: Coordinate;
 		position: Coordinate;
 		route?: RoadRoute | null;
-		alternative?: RoadRoute | null;
+		alternatives?: RoadRoute[];
+		onselectalternative?: (road: RoadRoute) => void;
 		zones?: SimulationZone[];
 		picking?: boolean;
 		liveTraffic?: boolean;
@@ -64,7 +66,10 @@
 		fitted = '';
 	function fit() {
 		if (!map) return;
-		const path = route?.polyline || [origin, destination];
+		const path = [
+			...(route?.polyline || [origin, destination]),
+			...alternatives.flatMap((road) => road.polyline)
+		];
 		map.fitBounds(L.latLngBounds(path), {
 			paddingTopLeft: [24, 24],
 			paddingBottomRight: [24, 64],
@@ -197,13 +202,43 @@
 				label.textContent = `Satellite-observed flooding · ${observationTime(p.observedAt)} · ${age}h old · ${recent ? 'recent observation' : 'dated context'} · ${p.quality === 'high' ? 'likelihood ≥80, no advisory flags' : 'quality caution'} · GFM ${p.version}. No water-depth estimate. ${observed.attribution}`;
 				area.bindPopup(label);
 			}
-		if (alternative)
-			L.polyline(alternative.polyline, {
-				color: '#8aa8de',
-				weight: 5,
-				opacity: 0.8,
-				interactive: false
+		for (const [index, alternative] of alternatives.entries()) {
+			L.polyline(alternative.polyline, { color: '#fff', weight: 12, interactive: false }).addTo(
+				group
+			);
+			const line = L.polyline(alternative.polyline, {
+				color: '#64748b',
+				weight: 7,
+				opacity: 1,
+				className: 'alternative-route-path'
 			}).addTo(group);
+			const label = `Alternative ${index + 1} · ${(alternative.distanceMeters / 1000).toFixed(1)} km`;
+			line.bindTooltip(`${label} · Select route`, {
+				permanent: true,
+				direction: 'center',
+				className: 'alternative-route-label',
+				interactive: true
+			});
+			line.on('click', () => {
+				if (!picking) onselectalternative?.(alternative);
+			});
+			line.getTooltip()?.on('click', () => {
+				if (!picking) onselectalternative?.(alternative);
+			});
+			const element = line.getElement();
+			if (element) {
+				element.setAttribute('role', 'button');
+				element.setAttribute('tabindex', picking ? '-1' : '0');
+				element.setAttribute('aria-label', `Select ${label}`);
+				element.addEventListener('keydown', (event) => {
+					const key = (event as KeyboardEvent).key;
+					if (!picking && (key === 'Enter' || key === ' ')) {
+						event.preventDefault();
+						onselectalternative?.(alternative);
+					}
+				});
+			}
+		}
 		if (route) {
 			L.polyline(route.polyline, { color: '#fff', weight: 10, interactive: false }).addTo(group);
 			L.polyline(route.polyline, { color: '#2875e7', weight: 6, interactive: false }).addTo(group);
@@ -227,8 +262,9 @@
 		const key = route
 			? route.key + JSON.stringify([route.polyline[0], route.polyline.at(-1)])
 			: JSON.stringify([origin, destination]);
-		if (key !== fitted) {
-			fitted = key;
+		const previewKey = key + JSON.stringify(alternatives.map((road) => [road.key, road.polyline]));
+		if (previewKey !== fitted) {
+			fitted = previewKey;
 			fit();
 		}
 		return () => markers.forEach((marker) => marker.destroy());
@@ -317,7 +353,7 @@
 </div>
 {#if !offline}
 	<div
-		class="layer-control absolute bottom-6 left-6 z-[460] max-[759px]:left-3"
+		class="layer-control absolute bottom-6 left-6 z-460 max-[759px]:left-3"
 		style:bottom={layout.mobile
 			? layout.mobilePanel === 'controls'
 				? 'calc(var(--mobile-viewport-height, 100dvh) * 0.5 + 1.5rem)'
@@ -325,19 +361,21 @@
 			: undefined}
 	>
 		<button
-			class="layer-button btn h-14 gap-2 rounded-xl border-base-300 bg-base-100 px-4 text-base-content shadow-lg"
+			class="layer-button btn h-14 gap-2 rounded-box border-base-300 bg-base-100 px-4 text-base-content shadow-lg"
 			onclick={() => (layerOpen = !layerOpen)}
 			aria-label="Map layers"
 			aria-expanded={layerOpen}
 			aria-controls="map-layer-options"
-			><Icon name="layers" size={22} /><span class="text-left"
-				>Layers<small class="block text-[10px] font-normal opacity-60">{layer}</small></span
-			></button
 		>
+			<Icon name="layers" size={22} /><span class="text-left">
+				Layers
+				<small class="block text-[10px] font-normal opacity-60">{layer}</small></span
+			>
+		</button>
 		{#if layerOpen}
 			<div
 				id="map-layer-options"
-				class="layer-options absolute bottom-full left-0 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-base-300 bg-base-100 p-3 text-base-content shadow-xl"
+				class="layer-options absolute bottom-full left-0 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-box border border-base-300 bg-base-100 p-3 text-base-content shadow-xl"
 			>
 				<div class="mb-3 flex items-center justify-between">
 					<strong class="text-sm">Map layers</strong><button

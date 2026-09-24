@@ -580,7 +580,39 @@ test('mobile bell groups active notices, keeps blocked warning compact and resto
   await page.getByRole('button', { name: 'Simulation controls', exact: true }).click();
   await expect(page.locator('.demo-alerts')).toBeHidden();
   await expect(page.locator('.controller-drawer')).toBeVisible();
-  expect((await page.locator('.controller-drawer').boundingBox())!.height).toBeLessThanOrEqual(320);
+  expect((await page.locator('.controller-drawer').boundingBox())!.height).toBeCloseTo(640 * 0.9, 0);
+});
+
+test('configuration drawer fills 90 percent on mobile and retains desktop width', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 640 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Simulation controls', exact: true }).click();
+  const drawer = page.locator('.controller-drawer');
+  await expect(drawer).toBeVisible();
+  for (const viewport of [{ width: 360, height: 640 }, { width: 390, height: 844 }, { width: 740, height: 360 }]) {
+    await page.setViewportSize(viewport);
+    const box = (await drawer.boundingBox())!;
+    expect(box.height).toBeCloseTo(viewport.height * 0.9, 0);
+    expect(box.y).toBeCloseTo(viewport.height * 0.05, 0);
+    expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+    expect(await drawer.evaluate(el => getComputedStyle(el).overflowY)).toBe('auto');
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(drawer).toBeHidden();
+  await page.getByRole('button', { name: 'Open directions', exact: true }).click();
+  await page.getByRole('button', { name: 'Simulation controls', exact: true }).click();
+  await expect(drawer).toBeVisible();
+  expect((await drawer.boundingBox())!.width).toBe(420);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Crossing back to mobile closes transient panels.
+  await expect(drawer).toBeHidden();
+  await page.getByRole('button', { name: 'Simulation controls', exact: true }).click();
+  await expect(drawer).toBeVisible();
+  await drawer.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await expect(page.getByRole('button', { name: 'Load example trip: Fuente → SM City' })).toBeInViewport();
+  await drawer.evaluate(el => { el.scrollTop = 0; });
+  await page.getByRole('button', { name: 'Close configuration' }).click();
+  await expect(drawer).toBeHidden();
 });
 
 
@@ -856,4 +888,49 @@ test('map status chips and bottom-left layers stay compact', async ({ page, requ
   expect(await popup.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   expect((await popup.boundingBox())!.x).toBeGreaterThanOrEqual(0);
   await page.screenshot({ path: '/tmp/floodnav-mobile-controls.png' });
+});
+
+test('all alternative routes are visible and selectable on the map with an overlaid bell count', async ({ page }) => {
+  await page.route('**/router.project-osrm.org/**', r => r.fulfill({ json: { code: 'Ok', routes: [route([start, end], 100), route([start, [123.90,10.33], end], 120), route([start, [123.90,10.29], end], 140)] } }));
+  await page.route('**/api/observed-floods', r => r.fulfill({ json: satelliteData() }));
+  await page.goto('/');
+  await expect(page.locator('.alternative-route-path')).toHaveCount(2);
+  await expect(page.locator('.alternative-route-label')).toHaveCount(2);
+  await page.locator('.alternative-route-label').first().click();
+  await page.getByRole('button', { name: 'Open directions', exact: true }).click();
+  await expect(page.locator('.demo-route-card').nth(1)).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('.demo-route-card').first().click();
+  await page.locator('.leaflet-container').click({ position: { x: 1000, y: 400 } });
+  await page.locator('.alternative-route-path').nth(1).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Open directions', exact: true }).click();
+  await expect(page.locator('.demo-route-card').nth(2)).toHaveAttribute('aria-pressed', 'true');
+  const vehicles = page.getByRole('group', { name: 'Vehicle', exact: true });
+  const paths = await vehicles.locator('svg path').evaluateAll(nodes => nodes.map(n => n.getAttribute('d')));
+  expect(new Set(paths).size).toBe(5);
+  for (const name of ['Car', 'SUV', 'Truck', 'Motorcycle', 'Bicycle']) await expect(vehicles.getByRole('button', { name, exact: true })).toHaveAttribute('title', new RegExp(name));
+  await page.locator('.demo-route-card').first().click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const bell = page.locator('.mobile-topbar .notification-toggle');
+  const badge = bell.locator('.notification-count');
+  await expect(badge).toBeVisible();
+  expect(await badge.evaluate(el => getComputedStyle(el).position)).toBe('absolute');
+  const b = (await bell.boundingBox())!, c = (await badge.boundingBox())!;
+  expect(c.x).toBeLessThan(b.x + b.width);
+  expect(c.y).toBeLessThan(b.y + b.height / 2);
+  await page.screenshot({ path: '/tmp/floodnav-route-alternatives.png' });
+});
+
+test('compact status chips reveal provider explanations without permanent banners', async ({ page, request }) => {
+  await page.route('**/api/demo/routes', r => r.fulfill({ status: 503, json: { error: 'Unavailable' } }));
+  await page.route('**/api/assessments', r => r.fulfill({ json: { assessedAt: new Date().toISOString(), routes: [{key:'road_0',score:null}], hazards: { features: [], verified: false }, weather: { samples: [], errors: [] } } }));
+  await publish(request, { ...empty, floodSimulation: false, trafficSimulation: false });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Basic ETA', exact: true }).click();
+  await expect(page.locator('#map-status-detail')).toContainText('Live traffic unavailable');
+  await page.getByRole('button', { name: 'MGB pending', exact: true }).click();
+  await expect(page.locator('#map-status-detail')).toContainText('verification pending');
+  await expect(page.locator('#mobile-notifications .info-banner')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#map-status-detail')).toHaveCount(0);
 });

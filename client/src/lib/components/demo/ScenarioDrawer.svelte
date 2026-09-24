@@ -3,29 +3,36 @@
 		applyConditions,
 		demo,
 		loadExampleTrip,
-		PLAYBACK_SPEEDS,
-		navigation
+		navigation,
+		PLAYBACK_SPEEDS
 	} from '$lib/states/demo.svelte';
-	import { beginPick, cancelPick, setConfiguration, layoutView } from '$lib/states/layout.svelte';
+	import { beginPick, cancelPick, layoutView, setConfiguration } from '$lib/states/layout.svelte';
 
-	import ConditionsEditor from './ConditionsEditor.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import ConditionsEditor from './ConditionsEditor.svelte';
 </script>
 
 <aside
-	class="controller-drawer fixed top-6 right-6 z-[600] flex max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] flex-col overflow-auto rounded-box border border-base-300 bg-base-100 p-4 shadow-2xl max-[759px]:inset-x-2 max-[759px]:top-14 max-[759px]:max-h-80 max-[759px]:w-auto max-[759px]:max-w-none"
+	class="controller-drawer fixed top-6 right-6 z-[600] flex max-h-[calc(100dvh-3rem)] w-[420px] max-w-[calc(100vw-3rem)] flex-col overflow-auto rounded-box border border-base-300 bg-base-100 p-4 shadow-2xl max-[759px]:inset-x-2 max-[759px]:top-[5dvh] max-[759px]:h-[90dvh] max-[759px]:max-h-[90dvh] max-[759px]:w-auto max-[759px]:max-w-none"
 	hidden={!layoutView.drawerOpen}
 	class:hidden={!layoutView.drawerOpen}
 	aria-label="Scenario configuration"
 >
-	<div class="configuration-close">
-		<button class="text-button btn btn-ghost btn-sm" onclick={() => setConfiguration(false)}
-			>Close configuration <Icon name="close" size={16} /></button
-		>
-	</div>
+	<!-- <div class="configuration-close"> -->
+	<button
+		class="text-button btn btn-circle self-end btn-ghost btn-sm"
+		onclick={() => setConfiguration(false)}
+	>
+		<Icon name="close" size={16} />
+	</button>
+	<!-- </div> -->
 	<div class="playback-control form-control">
 		<label class="label" for="playback-speed">Travel playback speed</label>
-		<select class="select-bordered select" id="playback-speed" bind:value={demo.playbackSpeed}>
+		<select
+			class="select-bordered select w-full"
+			id="playback-speed"
+			bind:value={demo.playbackSpeed}
+		>
 			{#each PLAYBACK_SPEEDS as speed}
 				<option value={speed}>{speed}×{speed === 1 ? ' · Real time' : ''}</option>
 			{/each}

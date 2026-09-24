@@ -1,7 +1,7 @@
 <script lang="ts">
+	import Icon from '$lib/components/Icon.svelte';
 	import { demo, navigation } from '$lib/states/demo.svelte';
 	import { layout, layoutView } from '$lib/states/layout.svelte';
-	import Icon from '$lib/components/Icon.svelte';
 	let active = $state<string | null>(null);
 	const chips = $derived([
 		...(demo.offlineDemo
@@ -78,12 +78,12 @@
 </script>
 
 <div
-	class="status-chips absolute top-7 right-20 left-[400px] z-[410] max-[759px]:top-18 max-[759px]:right-3 max-[759px]:left-3"
+	class="absolute top-7 right-20 left-100 z-410 max-[759px]:top-18 max-[759px]:right-3 max-[759px]:left-3"
 >
 	<div class="map-source-badges flex gap-2 overflow-x-auto pb-1 text-xs" aria-label="Map status">
 		{#each chips as chip (chip.id)}
 			<button
-				class="btn h-9 min-h-0 shrink-0 rounded-full border-base-300 bg-base-100 px-3 text-xs font-normal text-base-content shadow-sm"
+				class="btn h-9 min-h-0 shrink-0 rounded-box border-base-300 bg-base-100 px-3 text-xs font-normal text-base-content shadow-sm"
 				aria-expanded={active === chip.id}
 				aria-controls="map-status-detail"
 				onclick={() => (active = active === chip.id ? null : chip.id)}>{chip.label}</button
@@ -93,7 +93,7 @@
 	{#if selected}
 		<div
 			id="map-status-detail"
-			class="mt-2 flex w-80 max-w-full items-start gap-2 rounded-xl border border-base-300 bg-base-100 p-3 text-xs text-base-content shadow-lg"
+			class="mt-2 flex w-80 max-w-full items-start gap-2 rounded-box border border-base-300 bg-base-100 p-3 text-xs text-base-content shadow-lg"
 			role="status"
 		>
 			<p class="min-w-0 flex-1 leading-relaxed">{selected.detail}</p>

@@ -12,12 +12,12 @@
 </script>
 
 <header
-	class="mobile-topbar navbar fixed inset-x-0 top-0 z-[500] flex justify-between bg-base-100/95 px-4 shadow min-[760px]:hidden"
+	class="mobile-topbar navbar fixed inset-x-0 top-0 z-500 flex justify-between bg-base-100/95 px-4 shadow min-[760px]:hidden"
 >
 	<a href="/" class="brand flex items-center gap-2 font-bold"><Icon name="route" />FloodNav</a>
 	<div class="flex items-center gap-2">
 		<button
-			class="icon-button notification-toggle btn btn-circle btn-ghost btn-sm"
+			class="notification-toggle btn relative btn-circle btn-ghost btn-sm"
 			disabled={!demo.mounted}
 			aria-label={`Notifications, ${navigation.notices} active`}
 			aria-expanded={layout.mobilePanel === 'notifications'}
@@ -29,7 +29,8 @@
 				)}
 		>
 			<Icon name="bell" />
-			{#if navigation.notices}<span class="notification-count badge badge-xs badge-error"
+			{#if navigation.notices}<span
+					class="notification-count pointer-events-none absolute -top-1 -right-1 badge badge-xs badge-error"
 					>{navigation.notices}</span
 				>{/if}
 		</button>
@@ -46,7 +47,7 @@
 
 {#if navigation.urgentMessage && !layout.picking}
 	<button
-		class="mobile-urgent absolute inset-x-2 top-16 z-[550] alert flex alert-warning min-[760px]:hidden"
+		class="mobile-urgent absolute inset-x-2 top-16 z-550 alert flex alert-warning min-[760px]:hidden"
 		aria-live="polite"
 		onclick={() => setMobilePanel('notifications')}
 	>
@@ -56,8 +57,8 @@
 	</button>
 {/if}
 
-{#if layout.picking}
-	<div class="pick-banner absolute inset-x-2 top-16 z-[800] alert flex alert-info">
+{#if layout.picking && (!layoutView.drawerOpen || layout.picking === 'origin' || layout.picking === 'destination')}
+	<div class="pick-banner absolute inset-x-2 top-16 z-800 alert flex alert-info">
 		<Icon name="pin" />
 		<span
 			>Click the map to place {layout.picking === 'origin'

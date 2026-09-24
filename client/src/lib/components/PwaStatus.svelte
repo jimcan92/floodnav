@@ -1,8 +1,8 @@
 <script lang="ts">
-	import Icon from '$lib/components/Icon.svelte';
-	import { onMount } from 'svelte';
 	import { dev, version } from '$app/environment';
+	import Icon from '$lib/components/Icon.svelte';
 	import { pwaState } from '$lib/services/pwaState.svelte';
+	import { onMount } from 'svelte';
 	let offlineDialog: HTMLDialogElement;
 	let waiting = $state<ServiceWorker | null>(null),
 		changedController = $state(false),
@@ -138,28 +138,28 @@
 
 {#if waiting || changedController}
 	<aside
-		class="pwa-update fixed bottom-4 left-1/2 z-[2200] alert grid w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 gap-2 shadow-xl"
+		class="pwa-update fixed bottom-4 left-1/2 z-2200 alert grid w-[min(420px,calc(100vw-2rem))] -translate-x-1/2 gap-2 shadow-xl"
 		role="status"
 		aria-label="App update"
 	>
 		<strong>Update available</strong>
-		<span
-			>{pwaState.busy
+		<span>
+			{pwaState.busy
 				? 'Updating will end your trip and discard unsaved edits.'
-				: 'A new FloodNav version is ready.'}</span
-		>
+				: 'A new FloodNav version is ready.'}
+		</span>
 		<button class="btn" onclick={updateNow} disabled={!pwaState.online}>Update now</button>
 	</aside>
 {/if}
 {#if installPrompt}<button
-		class="pwa-install btn fixed top-3 right-3 z-[1400] shadow btn-sm"
+		class="pwa-install btn fixed bottom-4 left-1/2 z-1400 shadow btn-sm"
 		onclick={async () => {
 			await installPrompt?.prompt();
 			installPrompt = null;
 		}}>Install FloodNav</button
 	>{/if}
 {#if updateError}<p
-		class="pwa-error fixed right-3 bottom-2 z-[2200] alert max-w-[min(340px,calc(100vw-1.5rem))] text-xs alert-warning"
+		class="pwa-error fixed right-3 bottom-2 z-2200 alert max-w-[min(340px,calc(100vw-1.5rem))] text-xs alert-warning"
 		role="status"
 	>
 		{updateError}

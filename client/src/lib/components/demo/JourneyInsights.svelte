@@ -10,10 +10,10 @@
 {#if !demo.started}{@render routeChoices()}{:else}
 	<h2 class="font-semibold">Remaining journey</h2>
 	<p>{kmLabel(navigation.remainingMeters)} · {formatTravelTime(navigation.remainingSeconds)}</p>
-	{#each demo.candidates as road}<button
+	{#each navigation.routeAlternatives as road}<button
 			class="demo-route-card btn h-auto w-full justify-start gap-3 btn-outline p-3 text-left"
 			onclick={() => acceptAlternative(road)}
-			>Use alternative · {kmLabel(road.distanceMeters)}</button
+			>Select alternative · {kmLabel(road.distanceMeters)}</button
 		>{/each}
 {/if}
 {@render conditionsSummary()}

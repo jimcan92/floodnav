@@ -16,11 +16,11 @@
 		findObservedAlternative,
 		mapPick,
 		mountDemo,
+		navigation,
 		selectRoute,
 		stopTrip,
 		syncConditions,
-		togglePlaying,
-		navigation
+		togglePlaying
 	} from '$lib/states/demo.svelte';
 	import {
 		bindObservedFloodFetch,
@@ -31,17 +31,17 @@
 	import {
 		bindLayoutMedia,
 		layout,
+		layoutView,
 		setConfiguration,
-		setMobilePanel,
-		layoutView
+		setMobilePanel
 	} from '$lib/states/layout.svelte';
 	import { onMount, untrack } from 'svelte';
 
 	import ConditionsSummary from './ConditionsSummary.svelte';
-	import StatusChips from './StatusChips.svelte';
 	import DemoHeader from './DemoHeader.svelte';
 	import DemoMap from './DemoMap.svelte';
 	import DemoNotifications from './DemoNotifications.svelte';
+	import StatusChips from './StatusChips.svelte';
 
 	import RouteChoices from './RouteChoices.svelte';
 	import TripProgress from './TripProgress.svelte';
@@ -142,7 +142,7 @@
 	}}
 />
 <main
-	class="demo-shell relative h-[var(--mobile-viewport-height,100dvh)] w-full overflow-hidden bg-base-200 text-base-content"
+	class="demo-shell relative h-(--mobile-viewport-height,100dvh) w-full overflow-hidden bg-base-200 text-base-content"
 	style:--mobile-viewport-height={layout.mobile && layout.mobileViewportHeight
 		? `${layout.mobileViewportHeight}px`
 		: undefined}
@@ -159,7 +159,13 @@
 			position={navigation.position}
 			followPosition={demo.started && navigation.gpsTravel && demo.playing && !!demo.gpsPosition}
 			route={navigation.ownRoad}
-			alternative={navigation.alternative}
+			alternatives={navigation.routeAlternatives}
+			onselectalternative={(road) => {
+				if (navigation.editable) {
+					if (demo.started) acceptAlternative(road);
+					else selectRoute(road);
+				}
+			}}
 			zones={navigation.visibleZones}
 			picking={!!layout.picking}
 			liveTraffic={!navigation.conditions.trafficSimulation && pwaState.online && !demo.offlineDemo}

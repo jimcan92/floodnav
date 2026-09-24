@@ -13,7 +13,7 @@
 </script>
 
 <section
-	class="zone-editor card gap-3 border border-base-300 bg-base-200 p-4"
+	class="zone-editor card gap-3 border-2 border-primary bg-base-100 p-4 ring-2 ring-primary/15"
 	aria-label="Area editor"
 >
 	<div class="section-title flex items-center justify-between gap-2">
@@ -24,6 +24,15 @@
 			aria-label="Close area editor"
 			onclick={onclose}><Icon name="close" size={17} /></button
 		>
+	</div>
+	<div class="rounded-box bg-primary/10 p-3 text-sm">
+		<p class="font-semibold text-primary">Set this area’s parameters</p>
+		<p class="mt-1">
+			{zone.kind === 'traffic'
+				? 'Set the area name, radius, and traffic level below.'
+				: 'Set the area name, radius, flood depth, and rainfall below.'}
+			Keep Area enabled checked to include it in the simulation, then select Apply changes below to save.
+		</p>
 	</div>
 	<label class="fieldset-label flex flex-col items-start gap-1 whitespace-normal"
 		>Area name<input
